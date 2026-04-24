@@ -5,6 +5,12 @@
 from pathlib import Path
 from typing import List
 
+
+
+# --- Управление обработкой файлов ---
+# 1 = пропустить уже обработанные файлы, загрузить только существующие метрики в веб-монитор
+# 0 = переобработать все файлы из inputs/, очистить веб-монитор перед началом
+ПРОПУСК_ОБРАБОТАННЫХ = 1
 # --- Общие ---
 MODEL_NAME = "gemma-3-12b-it"
 LMSTUDIO_URL = "http://localhost:1234/v1"
@@ -28,6 +34,7 @@ USE_CHAIN_OF_THOUGHT_PROMPT = True
 DYNAMIC_TEMPERATURES_ENABLED = False
 SELF_CONSISTENCY_ENABLED = False
 SELF_CONSISTENCY_EXTRA_COUNT = 0
+
 MAX_CORRECTION_ATTEMPTS = 1
 CORRECTION_TEMPERATURES = [0.7]
 
@@ -177,9 +184,9 @@ Explanation: [specific explanation of why you gave this score, mentioning streng
 
 # --- Пороги качества ---
 CORRECTION_THRESHOLDS = {
-    "excellent": {"delta_wer": 0.3, "delta_lev": -0.05},
-    "good": {"delta_wer": 0.15, "delta_lev": -0.1},
-    "satisfactory": {"delta_wer": 0}
+    "excellent": {"delta_wer": 0.3, "delta_lev": 0.05},
+    "good": {"delta_wer": 0.15, "delta_lev": 0.02},
+    "satisfactory": {"delta_wer": 0.1, "delta_lev": 0}
 }
 
 SUMMARY_THRESHOLDS = {

@@ -104,9 +104,9 @@ def start_web_monitor():
             # Import Flask app
             from web_monitor import app
             
-            print("Starting Web Monitor on http://127.0.0.1:5003")
+            print("Starting Web Monitor on http://127.0.0.1:5000")
             print("Web Monitor will be available for monitoring metrics in real-time")
-            app.run(debug=False, host='127.0.0.1', port=5003, use_reloader=False)
+            app.run(debug=False, host='127.0.0.1', port=5000, use_reloader=False)
         except Exception as e:
             print(f"Error starting web monitor: {e}")
             import traceback
@@ -122,11 +122,11 @@ def start_web_monitor():
     def open_browser():
         time.sleep(3)
         try:
-            webbrowser.open('http://127.0.0.1:5003')
-            print("Web Monitor opened in browser at http://127.0.0.1:5003")
+            webbrowser.open('http://127.0.0.1:5000')
+            print("Web Monitor opened in browser at http://127.0.0.1:5000")
         except Exception as e:
             print(f"Could not open browser automatically: {e}")
-            print("Please manually open http://127.0.0.1:5003 in your browser")
+            print("Please manually open http://127.0.0.1:5000 in your browser")
     
     browser_thread = threading.Thread(target=open_browser, daemon=True)
     browser_thread.start()
@@ -430,10 +430,29 @@ def print_batch_results(results: dict, file_type: str):
                 
             print(f"       Perplexity: {perp:.4f}" if isinstance(perp, (int, float)) else f"       Perplexity: {perp}")
             
+            # Calculate overall correction quality based on LevRating and improvements
+            lev_rating = lev if isinstance(lev, (int, float)) else 0
+            has_improvements = (delta_wer or 0) > 0 or (delta_lev or 0) > 0
+            
+            if has_improvements and lev_rating > 0.95:
+                quality = "ОТЛИЧНО"
+            elif has_improvements and 0.85 <= lev_rating <= 0.95:
+                quality = "ХОРОШО"
+            elif has_improvements and 0.75 <= lev_rating <= 0.85:
+                quality = "УДОВЛЕТВОРИТЕЛЬНО"
+            elif has_improvements and lev_rating < 0.75:
+                quality = "ТРЕБУЕТСЯ УЛУЧШЕНИЕ"
+            elif not has_improvements and lev_rating > 0.75:
+                quality = "ТРЕБУЕТСЯ УЛУЧШЕНИЕ"
+            else:  # not has_improvements and lev_rating < 0.75
+                quality = "ПЛОХО"
+                
+            print(f"        Quality: {quality}")
+            
             # Show correction time
             correction_time = results.get('correction_time', 'N/A')
             if correction_time != 'N/A':
-                print(f"       Processing time: {correction_time}")
+                print(f"        Processing time: {correction_time}")
             
             # Show aggregation results
             aggregator_used = results.get('aggregator_used', 'N/A')
@@ -468,7 +487,7 @@ def print_batch_results(results: dict, file_type: str):
             
             # Highlight SumScore with quality assessment
             if isinstance(sum_score, (int, float)):
-                sum_quality = "EXCELLENT" if sum_score > 0.8 else "GOOD" if sum_score > 0.5 else "POOR"
+                sum_quality = "EXCELLENT" if sum_score > 0.8 else "GOOD" if sum_score > 0.6 else "BAD"
                 print(f"        SumScore: {sum_score:.4f} [{sum_quality}]")
             else:
                 print(f"        SumScore: {sum_score}")
@@ -584,7 +603,7 @@ async def process_text_file(input_file: str,
                 "reference_text": results.get("reference_text", ""),
                 "metrics": results.get("metrics_correction", {}),
                 "processing_time_seconds": processing_time_seconds,
-                "best_prompt": results.get("best_prompt_cor", "basic"),
+                "best_prompt": results.get("best_correction_prompt", results.get("best_prompt_cor", "basic")),
                 "temperature": results.get("correction_temperature", 0.7)
             }
             with open(correction_metrics_file, 'w', encoding='utf-8') as f:
@@ -621,8 +640,8 @@ async def process_text_file(input_file: str,
                 "reference_summary": reference_summary,
                 "metrics": results.get("summary_metrics", {}),
                 "processing_time_seconds": processing_time_seconds,
-                "best_prompt": results.get("best_prompt_sum", "basic"),
-                "temperature": results.get("summary_temperature", 0.7)
+                "best_prompt": results.get("best_summary_prompt", results.get("best_prompt_sum", "")),  # Изменено
+                "temperature": results.get("summarization_temperature", 0.7)
             }
             with open(summary_metrics_file, 'w', encoding='utf-8') as f:
                 json.dump(summary_metrics, f, ensure_ascii=False, indent=2)
@@ -672,6 +691,56 @@ async def process_batch_files(domain: str = "general",
     print(f" Domain: {domain}")
     print(f" Correction: {'Enabled' if enable_correction else 'Disabled'}")
     print(f" Summarization: {'Enabled' if enable_summarization else 'Disabled'}")
+    
+    # Check ПРОПУСК_ОБРАБОТАННЫХ setting
+    skip_processed = config.ПРОПУСК_ОБРАБОТАННЫХ
+    print(f" Skip processed files: {'YES' if skip_processed else 'NO'}")
+    
+    if skip_processed == 1:
+        # Check which files are already processed and process only missing ones
+        print(" MODE: Skip already processed files, process only missing ones")
+        
+        # Check which files already have metrics
+        processed_files = set()
+        correction_metrics_dir = Path("data/correction_metrics")
+        if correction_metrics_dir.exists():
+            for json_file in correction_metrics_dir.glob("*.json"):
+                processed_files.add(json_file.stem)
+        
+        print(f" Already processed files: {len(processed_files)}")
+        for filename in processed_files:
+            print(f"   - {filename}")
+        
+        # Filter out already processed files
+        files_to_process = []
+        for file_type, file_path in all_files:
+            if file_path.stem not in processed_files:
+                files_to_process.append((file_type, file_path))
+        
+        if not files_to_process:
+            print(" All files already processed, loading existing metrics only...")
+            import time
+            time.sleep(3)  # Give web monitor time to load existing files
+            print("Web monitor should now show all existing metrics files")
+            return {}
+        else:
+            print(f" Processing {len(files_to_process)} missing files:")
+            for file_type, file_path in files_to_process:
+                print(f"   - {file_path.name}")
+            
+            # Update all_files to only include missing files
+            all_files = files_to_process
+    else:
+        # Reprocess all files, clear existing data
+        print(" MODE: Reprocess all files, clear existing data")
+        # Clear existing metrics files
+        import shutil
+        data_dirs = ["data/correction_metrics", "data/summary_metrics", "data/correction", "data/summary"]
+        for data_dir in data_dirs:
+            if Path(data_dir).exists():
+                shutil.rmtree(data_dir)
+                Path(data_dir).mkdir(parents=True, exist_ok=True)
+                print(f" Cleared and recreated: {data_dir}")
     
     # Process all files with numbering
     for i, (file_type, file_path) in enumerate(all_files, 1):
@@ -775,7 +844,7 @@ async def main():
         
         data = json.dumps({}).encode('utf-8')
         req = urllib.request.Request(
-            'http://127.0.0.1:5003/api/reset_time',
+            'http://127.0.0.1:5000/api/reset_time',
             data=data,
             headers={'Content-Type': 'application/json'}
         )
@@ -807,6 +876,12 @@ async def main():
             print(f"{status} {fname}")
     else:
         print("\n No files processed")
+    
+    # Wait for web monitor to process the last file
+    print("\n Waiting for web monitor to process final files...")
+    import time
+    time.sleep(5)  # Give web monitor time to process the last file
+    print("Web monitor should now show all processed files")
 
 def format_text_sentences(text: str) -> str:
     """Format text with each sentence on new line"""

@@ -479,8 +479,26 @@ class CorrectorEnsemble(BaseAgent):
             
             variant["composite_score"] = composite_score
         
-        # Выбор варианта с максимальной оценкой
-        best_variant = max(variants, key=lambda v: v["composite_score"])
+        # Выбор варианта с приоритетом deltaLev>0.05 и deltaWER>0.1
+        # Сначала фильтруем варианты которые удовлетворяют приоритетам
+        priority_variants = []
+        for variant in variants:
+            delta_wer = variant["metrics"].get("wer_original", 1.0) - variant["metrics"].get("wer_corrected", 1.0)
+            delta_lev = variant["metrics"].get("lev_corrected", 0.0) - variant["metrics"].get("lev_original", 0.0)
+            
+            if delta_lev > 0.05 and delta_wer > 0.1:
+                priority_variants.append(variant)
+        
+        # Если есть варианты с приоритетами, выбираем лучший из них по composite_score
+        if priority_variants:
+            best_variant = max(priority_variants, key=lambda v: v["composite_score"])
+            self.log_execution(f"Выбран вариант с приоритетными метриками: {best_variant['prompt_type']} "
+                             f"(deltaLev={delta_lev:.3f}, deltaWER={delta_wer:.3f}, score={best_variant['composite_score']:.3f})")
+        else:
+            # Иначе выбираем лучший по composite_score из всех вариантов
+            best_variant = max(variants, key=lambda v: v["composite_score"])
+            self.log_execution(f"Приоритетные метрики не найдены, выбран лучший по score: {best_variant['prompt_type']} "
+                             f"(score={best_variant['composite_score']:.3f})")
         
         self.log_execution(f"Лучший вариант: {best_variant['prompt_type']} "
                          f"(score={best_variant['composite_score']:.3f})")

@@ -75,32 +75,29 @@ class CorrectionJudge(BaseAgent):
         """
         delta_wer = metrics.get("delta_wer", 0)
         delta_lev = metrics.get("delta_lev", 0)
+        lev_rating = metrics.get("lev_corrected", metrics.get("lev_rating", 0))
         cor_score = metrics.get("cor_score", 0)
         
-        # Определение качества на основе порогов
-        thresholds = config.CORRECTION_THRESHOLDS
+        # Новая логика определения качества на основе LevRating и улучшений
+        has_improvements = delta_wer > 0 or delta_lev > 0
         
-        if (delta_wer > thresholds["excellent"]["delta_wer"] and 
-            delta_lev > thresholds["excellent"]["delta_lev"]):
+        if has_improvements and lev_rating > 0.95:
             quality = "ОТЛИЧНО"
             retry_needed = False
-        elif (delta_wer > thresholds["good"]["delta_wer"] and 
-              delta_lev > thresholds["good"]["delta_lev"]):
+        elif has_improvements and 0.85 <= lev_rating <= 0.95:
             quality = "ХОРОШО"
             retry_needed = False
-        elif delta_wer > thresholds["satisfactory"]["delta_wer"]:
+        elif has_improvements and 0.75 <= lev_rating <= 0.85:
             quality = "УДОВЛЕТВОРИТЕЛЬНО"
             retry_needed = False
-        else:
+        elif has_improvements and lev_rating < 0.75:
             quality = "ТРЕБУЕТСЯ УЛУЧШЕНИЕ"
             retry_needed = True
-        
-        # Дополнительная проверка на основе CorScore
-        if cor_score < 0.1:
+        elif not has_improvements and lev_rating > 0.75:
             quality = "ТРЕБУЕТСЯ УЛУЧШЕНИЕ"
             retry_needed = True
-        elif cor_score < 0.3 and quality == "УДОВЛЕТВОРИТЕЛЬНО":
-            quality = "ТРЕБУЕТСЯ УЛУЧШЕНИЕ"
+        else:  # not has_improvements and lev_rating < 0.75
+            quality = "ПЛОХО"
             retry_needed = True
         
         # Логирование метрик для анализа

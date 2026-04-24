@@ -52,6 +52,7 @@ def load_metrics_from_files():
                 'LevRating_after': m.get('LevRating', m.get('lev_corrected', 0)),
                 'Perplexity': m.get('perplexity', 0),
                 'CorScore': m.get('CorScore', m.get('cor_score', 0)),
+                'processing_time_seconds': data.get('processing_time_seconds', 0),
                 'timestamp': datetime.fromtimestamp(file.stat().st_mtime).isoformat()
             }
             
@@ -178,6 +179,7 @@ HTML_TEMPLATE = """
         <div class="status-card"><h3>Всего файлов</h3><p id="total">0</p></div>
         <div class="status-card"><h3>Обработано</h3><p id="processed">0</p></div>
         <div class="status-card"><h3>Осталось</h3><p id="remaining">0</p></div>
+        <div class="status-card"><h3>Успешно/Неуспешно</h3><p id="success-rate">-</p></div>
         <div class="status-card"><h3>Прогресс</h3><div class="progress-bar"><div class="progress-fill" id="progress-fill">0%</div></div></div>
     </div>
     <div class="charts-grid">
@@ -188,20 +190,31 @@ HTML_TEMPLATE = """
         <div class="chart-card"><h3>G-Eval</h3><canvas id="chart-geval"></canvas></div>
         <div class="chart-card"><h3>METEOR</h3><canvas id="chart-meteor"></canvas></div>
         <div class="chart-card"><h3>LLM-Judge</h3><canvas id="chart-llmjudge"></canvas></div>
-        <div class="chart-card"><h3>SumScore</h3><canvas id="chart-sumscore"></canvas></div>
         <div class="chart-card"><h3>BertScore</h3><canvas id="chart-bertscore"></canvas></div>
+        <div class="chart-card"><h3>SumScore</h3><canvas id="chart-sumscore"></canvas></div>
     </div>
     <div class="table-container">
         <table id="metrics-table">
-            <thead><tr><th>ID</th><th>ΔWER</th><th>ΔLev</th><th>LevRating</th><th>Perplexity</th><th>CorScore</th><th>G-Eval</th><th>METEOR</th><th>LLM-Judge</th><th>SumScore</th><th>BertScore</th></tr></thead>
+            <thead><tr><th>Название файла</th><th>ΔWER</th><th>ΔLev</th><th>LevRating</th><th>Perplexity</th><th>CorScore</th><th>G-Eval</th><th>METEOR</th><th>LLM-Judge</th><th>BertScore</th><th>SumScore</th><th>Время (с)</th></tr></thead>
             <tbody></tbody>
         </table>
     </div>
     <script>
         let charts = {};
-        let startTime = new Date();
+        let startTime = null;
+        let runtimeInterval = null;
+        let isProcessingComplete = false;
+        
+        function initializeRuntime() {
+            if (!startTime) {
+                startTime = new Date();
+                runtimeInterval = setInterval(updateRuntime, 1000);
+            }
+        }
         
         function updateRuntime() {
+            if (!startTime) return;
+            
             const elapsed = Math.floor((new Date() - startTime) / 1000);
             const hours = String(Math.floor(elapsed / 3600)).padStart(2,'0');
             const minutes = String(Math.floor((elapsed % 3600) / 60)).padStart(2,'0');
@@ -217,9 +230,51 @@ HTML_TEMPLATE = """
                 document.getElementById('total').innerText = data.total_files;
                 document.getElementById('processed').innerText = data.processed_files;
                 document.getElementById('remaining').innerText = data.remaining_files;
+                
+                // Calculate success rate based on thresholds
+                if (data.metrics_list && data.metrics_list.length > 0) {
+                    const thresholds = {
+                        delta_WER: 0.1,
+                        LevRating_after: 0.8,
+                        CorScore: 0.5,
+                        G_Eval: 0.5,
+                        METEOR: 0.25,
+                        LLM_Judge: 6,
+                        BertScore: 0.7,
+                        SumScore: 0.6
+                    };
+                    
+                    let successful = 0;
+                    let unsuccessful = 0;
+                    
+                    for (let m of data.metrics_list) {
+                        let isSuccessful = true;
+                        
+                        // Check if any metric is below threshold (for delta_WER, lower is worse - means less improvement)
+                        if ((m.delta_WER || 0) < thresholds.delta_WER) isSuccessful = false;
+                        if ((m.LevRating_after || 0) < thresholds.LevRating_after) isSuccessful = false;
+                        if ((m.CorScore || 0) < thresholds.CorScore) isSuccessful = false;
+                        if ((m.G_Eval || 0) < thresholds.G_Eval) isSuccessful = false;
+                        if ((m.METEOR || 0) < thresholds.METEOR) isSuccessful = false;
+                        if ((m.LLM_Judge || 0) < thresholds.LLM_Judge) isSuccessful = false;
+                        if ((m.BertScore || 0) < thresholds.BertScore) isSuccessful = false;
+                        if ((m.SumScore || 0) < thresholds.SumScore) isSuccessful = false;
+                        
+                        if (isSuccessful) {
+                            successful++;
+                        } else {
+                            unsuccessful++;
+                        }
+                    }
+                    
+                    document.getElementById('success-rate').innerText = `${successful}/${unsuccessful}`;
+                } else {
+                    document.getElementById('success-rate').innerText = '-';
+                }
                 const progress = data.progress_percentage || 0;
                 document.getElementById('progress-fill').style.width = progress + '%';
                 document.getElementById('progress-fill').innerText = progress.toFixed(1) + '%';
+                
                 if (data.metrics_list && data.metrics_list.length) {
                     updateCharts(data.metrics_list);
                     updateTable(data.metrics_list);
@@ -229,42 +284,150 @@ HTML_TEMPLATE = """
         
         function updateCharts(metricsList) {
             const labels = metricsList.map(m => m.id);
-            function makeChart(id, data, label, color, minY, maxY) {
+            function makeChart(id, data, label, color, minY, maxY, threshold = null) {
                 const ctx = document.getElementById(id).getContext('2d');
                 if (charts[id]) charts[id].destroy();
+                
+                const datasets = [{
+                    label: label,
+                    data: data,
+                    borderColor: color,
+                    fill: false
+                }];
+                
+                // Add threshold line if provided
+                if (threshold !== null) {
+                    datasets.push({
+                        label: `Порог: ${threshold}`,
+                        data: Array(data.length).fill(threshold),
+                        borderColor: 'red',
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0
+                    });
+                }
+                
                 charts[id] = new Chart(ctx, {
                     type: 'line',
-                    data: { labels, datasets: [{ label, data, borderColor: color, fill: false }] },
-                    options: { responsive: true, scales: { y: { min: minY, max: maxY } } }
+                    data: { labels, datasets },
+                    options: { 
+                        responsive: true,
+                        scales: { y: { min: minY, max: maxY } },
+                        plugins: {
+                            legend: {
+                                display: true,
+                                position: 'top'
+                            }
+                        }
+                    }
                 });
             }
-            makeChart('chart-delta-wer', metricsList.map(m => m.delta_WER), 'ΔWER', '#f44336', -0.5, 1);
-            makeChart('chart-levrating', metricsList.map(m => m.LevRating_after), 'LevRating', '#4caf50', 0, 1);
-            makeChart('chart-perplexity', metricsList.map(m => m.Perplexity), 'Perplexity', '#9e9e9e', 0, 50);
-            makeChart('chart-corscore', metricsList.map(m => m.CorScore), 'CorScore', '#ff9800', 0, 1);
-            makeChart('chart-geval', metricsList.map(m => m.G_Eval), 'G-Eval', '#2196f3', 0, 1);
-            makeChart('chart-meteor', metricsList.map(m => m.METEOR), 'METEOR', '#9c27b0', 0, 1);
-            makeChart('chart-llmjudge', metricsList.map(m => m.LLM_Judge), 'LLM-Judge', '#ff5722', 0, 10);
-            makeChart('chart-sumscore', metricsList.map(m => m.SumScore), 'SumScore', '#009688', 0, 1);
-            makeChart('chart-bertscore', metricsList.map(m => m.BertScore), 'BertScore', '#795548', 0, 1);
+            makeChart('chart-delta-wer', metricsList.map(m => m.delta_WER), 'ΔWER', '#f44336', -0.5, 1, 0.1);
+            makeChart('chart-levrating', metricsList.map(m => m.LevRating_after), 'LevRating', '#4caf50', 0, 1, 0.7);
+            makeChart('chart-perplexity', metricsList.map(m => m.Perplexity), 'Perplexity', '#9e9e9e', 0, 50, 10);
+            makeChart('chart-corscore', metricsList.map(m => m.CorScore), 'CorScore', '#ff9800', 0, 1, 0.5);
+            makeChart('chart-geval', metricsList.map(m => m.G_Eval), 'G-Eval', '#2196f3', 0, 1, 0.5);
+            makeChart('chart-meteor', metricsList.map(m => m.METEOR), 'METEOR', '#9c27b0', 0, 1, 0.25);
+            makeChart('chart-llmjudge', metricsList.map(m => m.LLM_Judge), 'LLM-Judge', '#ff5722', 0, 10, 6);
+            makeChart('chart-sumscore', metricsList.map(m => m.SumScore), 'SumScore', '#009688', 0, 1, 0.6);
+            makeChart('chart-bertscore', metricsList.map(m => m.BertScore), 'BertScore', '#795548', 0, 1, 0.7);
         }
         
         function updateTable(metricsList) {
             const tbody = document.querySelector('#metrics-table tbody');
             tbody.innerHTML = '';
+            
+            // Define thresholds for red highlighting
+            const thresholds = {
+                delta_WER: 0.1,      // Higher is worse
+                delta_Lev: 0,        // Lower is worse
+                LevRating_after: 0.7, // Lower is worse
+                Perplexity: 10,      // Higher is worse
+                CorScore: 0.5,       // Lower is worse
+                G_Eval: 0.5,         // Lower is worse
+                METEOR: 0.25,         // Lower is worse
+                LLM_Judge: 6,        // Lower is worse
+                BertScore: 0.7,     // Lower is worse
+                SumScore: 0.6        // Lower is worse
+            };
+            
+            // Add data rows
             for (let m of metricsList) {
                 const row = tbody.insertRow();
                 row.insertCell(0).innerText = m.id;
-                row.insertCell(1).innerText = (m.delta_WER || 0).toFixed(4);
-                row.insertCell(2).innerText = (m.delta_Lev || 0).toFixed(4);
-                row.insertCell(3).innerText = (m.LevRating_after || 0).toFixed(4);
-                row.insertCell(4).innerText = (m.Perplexity || 0).toFixed(4);
-                row.insertCell(5).innerText = (m.CorScore || 0).toFixed(4);
-                row.insertCell(6).innerText = (m.G_Eval || 0).toFixed(4);
-                row.insertCell(7).innerText = (m.METEOR || 0).toFixed(4);
-                row.insertCell(8).innerText = (m.LLM_Judge || 0).toFixed(1);
-                row.insertCell(9).innerText = (m.SumScore || 0).toFixed(4);
-                row.insertCell(10).innerText = (m.BertScore || 0).toFixed(4);
+                
+                // Helper function to create colored cell
+                function createColoredCell(value, threshold, isHigherWorse = false) {
+                    const cell = row.insertCell();
+                    cell.innerText = value;
+                    if ((isHigherWorse && value > threshold) || (!isHigherWorse && value < threshold)) {
+                        cell.style.color = 'red';
+                        cell.style.fontWeight = 'bold';
+                    }
+                    return cell;
+                }
+                
+                createColoredCell((m.delta_WER || 0).toFixed(4), thresholds.delta_WER, false);
+                createColoredCell((m.delta_Lev || 0).toFixed(4), thresholds.delta_Lev, false);
+                createColoredCell((m.LevRating_after || 0).toFixed(4), thresholds.LevRating_after, false);
+                createColoredCell((m.Perplexity || 0).toFixed(4), thresholds.Perplexity, true);
+                createColoredCell((m.CorScore || 0).toFixed(4), thresholds.CorScore, false);
+                createColoredCell((m.G_Eval || 0).toFixed(4), thresholds.G_Eval, false);
+                createColoredCell((m.METEOR || 0).toFixed(4), thresholds.METEOR, false);
+                createColoredCell((m.LLM_Judge || 0).toFixed(1), thresholds.LLM_Judge, false);
+                createColoredCell((m.BertScore || 0).toFixed(4), thresholds.BertScore, false);
+                createColoredCell((m.SumScore || 0).toFixed(4), thresholds.SumScore, false);
+                
+                // Add processing time column
+                const timeCell = row.insertCell();
+                const processingTime = m.processing_time_seconds || 0;
+                timeCell.innerText = processingTime + 's';
+            }
+            
+            // Add average row if there are metrics
+            if (metricsList.length > 0) {
+                const avgRow = tbody.insertRow();
+                avgRow.style.fontWeight = 'bold';
+                avgRow.style.backgroundColor = '#f0f0f0';
+                
+                // Calculate averages
+                const avgDeltaWER = metricsList.reduce((sum, m) => sum + (m.delta_WER || 0), 0) / metricsList.length;
+                const avgDeltaLev = metricsList.reduce((sum, m) => sum + (m.delta_Lev || 0), 0) / metricsList.length;
+                const avgLevRating = metricsList.reduce((sum, m) => sum + (m.LevRating_after || 0), 0) / metricsList.length;
+                const avgPerplexity = metricsList.reduce((sum, m) => sum + (m.Perplexity || 0), 0) / metricsList.length;
+                const avgCorScore = metricsList.reduce((sum, m) => sum + (m.CorScore || 0), 0) / metricsList.length;
+                const avgGEval = metricsList.reduce((sum, m) => sum + (m.G_Eval || 0), 0) / metricsList.length;
+                const avgMeteor = metricsList.reduce((sum, m) => sum + (m.METEOR || 0), 0) / metricsList.length;
+                const avgLLMJudge = metricsList.reduce((sum, m) => sum + (m.LLM_Judge || 0), 0) / metricsList.length;
+                const avgBertScore = metricsList.reduce((sum, m) => sum + (m.BertScore || 0), 0) / metricsList.length;
+                const avgSumScore = metricsList.reduce((sum, m) => sum + (m.SumScore || 0), 0) / metricsList.length;
+                const avgProcessingTime = metricsList.reduce((sum, m) => sum + (m.processing_time_seconds || 0), 0) / metricsList.length;
+                
+                // Helper function to create colored average cell
+                function createColoredAvgCell(value, threshold, isHigherWorse = false) {
+                    const cell = avgRow.insertCell();
+                    cell.innerText = value;
+                    if ((isHigherWorse && value > threshold) || (!isHigherWorse && value < threshold)) {
+                        cell.style.color = 'red';
+                    }
+                    return cell;
+                }
+                
+                avgRow.insertCell(0).innerText = 'Среднее';
+                createColoredAvgCell(avgDeltaWER.toFixed(4), thresholds.delta_WER, false);
+                createColoredAvgCell(avgDeltaLev.toFixed(4), thresholds.delta_Lev, false);
+                createColoredAvgCell(avgLevRating.toFixed(4), thresholds.LevRating_after, false);
+                createColoredAvgCell(avgPerplexity.toFixed(4), thresholds.Perplexity, true);
+                createColoredAvgCell(avgCorScore.toFixed(4), thresholds.CorScore, false);
+                createColoredAvgCell(avgGEval.toFixed(4), thresholds.G_Eval, false);
+                createColoredAvgCell(avgMeteor.toFixed(4), thresholds.METEOR, false);
+                createColoredAvgCell(avgLLMJudge.toFixed(1), thresholds.LLM_Judge, false);
+                createColoredAvgCell(avgBertScore.toFixed(4), thresholds.BertScore, false);
+                createColoredAvgCell(avgSumScore.toFixed(4), thresholds.SumScore, false);
+                
+                // Add average processing time
+                const avgTimeCell = avgRow.insertCell();
+                avgTimeCell.innerText = Math.round(avgProcessingTime) + 's';
             }
         }
         
@@ -281,10 +444,11 @@ HTML_TEMPLATE = """
             window.URL.revokeObjectURL(url);
         }
         
+        // Initialize runtime timer when page loads
+        initializeRuntime();
+        
         refreshData();
         setInterval(refreshData, 15000);
-        updateRuntime();
-        setInterval(updateRuntime, 1000);
     </script>
 </body>
 </html>
@@ -311,7 +475,8 @@ def api_status():
             'METEOR': m.get('METEOR', 0),
             'LLM_Judge': m.get('LLM_Judge', 0),
             'SumScore': m.get('SumScore', 0),
-            'BertScore': m.get('BertScore', 0)
+            'BertScore': m.get('BertScore', 0),
+            'processing_time_seconds': m.get('processing_time_seconds', 0)
         })
     
     elapsed = (datetime.now() - system_start_time).total_seconds()
@@ -363,5 +528,5 @@ def reset_time():
     return jsonify({'success': True})
 
 if __name__ == '__main__':
-    print("\n🌐 WebMonitor запущен на http://127.0.0.1:5003")
-    app.run(debug=False, host='127.0.0.1', port=5003, use_reloader=False)
+    print("\n🌐 WebMonitor запущен на http://127.0.0.1:5000")
+    app.run(debug=False, host='127.0.0.1', port=5000, use_reloader=False)

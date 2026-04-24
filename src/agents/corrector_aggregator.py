@@ -76,12 +76,30 @@ class CorrectorAggregator(BaseAgent):
                 basic_metrics.append(metrics)
         
         if basic_variants:
-            # Select best basic variant by CorScore
-            best_idx = max(range(len(basic_variants)), 
-                          key=lambda i: basic_metrics[i].get("cor_score", 0))
+            # Select best basic variant with priority deltaLev>0.05 and deltaWER>0.1
+            priority_indices = []
+            for i, metrics in enumerate(basic_metrics):
+                delta_wer = metrics.get("wer_original", 1.0) - metrics.get("wer_corrected", 1.0)
+                delta_lev = metrics.get("lev_corrected", 0.0) - metrics.get("lev_original", 0.0)
+                
+                if delta_lev > 0.05 and delta_wer > 0.1:
+                    priority_indices.append(i)
+            
+            if priority_indices:
+                # Choose best among priority variants by CorScore
+                best_idx = max(priority_indices, key=lambda i: basic_metrics[i].get("cor_score", 0))
+                best_metrics = basic_metrics[best_idx]
+                delta_wer = best_metrics.get("wer_original", 1.0) - best_metrics.get("wer_corrected", 1.0)
+                delta_lev = best_metrics.get("lev_corrected", 0.0) - best_metrics.get("lev_original", 0.0)
+                self.log_execution(f"Selected priority variant (index {best_idx}) with deltaLev={delta_lev:.3f}, deltaWER={delta_wer:.3f}, CorScore={best_metrics.get('cor_score', 0):.3f}")
+            else:
+                # Fallback to best by CorScore
+                best_idx = max(range(len(basic_variants)), 
+                              key=lambda i: basic_metrics[i].get("cor_score", 0))
+                best_metrics = basic_metrics[best_idx]
+                self.log_execution(f"No priority variants found, selected best by CorScore (index {best_idx}) with CorScore={best_metrics.get('cor_score', 0):.3f}")
+            
             best_variant = basic_variants[best_idx]
-            best_metrics = basic_metrics[best_idx]
-            self.log_execution(f"Selected best basic variant (index {best_idx}) with CorScore={best_metrics.get('cor_score', 0):.3f}")
         else:
             # Fallback to corrected_text if no basic variants
             best_variant = corrected_text
