@@ -90,6 +90,5 @@ models/
 *.bak
 *.backup
 
-data/
-inputs
-INPUT/
+# Input directories
+inputs/
