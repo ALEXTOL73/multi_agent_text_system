@@ -58,29 +58,29 @@ class SummarizerAggregator(BaseAgent):
                            aggregation_reason="insufficient_variants")
             return state
         
-        # Выбор лучшего базового варианта из ансамбля
-        basic_variants = []
-        basic_metrics = []
+        # Выбор лучшего варианта из ансамбля
+        all_variants = []
+        all_metrics = []
         
-        # Find basic variants and their metrics
+        # Find all variants and their metrics
         for i, (output, prompt_type) in enumerate(zip(ensemble_outputs, ensemble_prompts)):
-            if prompt_type == "basic":
-                basic_variants.append(output)
-                # Calculate metrics for this basic variant
-                metrics = await self.metrics_calculator.calculate_summary_metrics(
-                    original_text=input_text,
-                    summary_text=output,
-                    reference_summary=reference_summary,
-                    lm_client=self.lm_client
-                )
-                basic_metrics.append(metrics)
+            # Включаем все варианты для выбора лучшего по SumScore
+            all_variants.append(output)
+            # Calculate metrics for this variant
+            metrics = await self.metrics_calculator.calculate_summary_metrics(
+                original_text=input_text,
+                summary_text=output,
+                reference_summary=reference_summary,
+                lm_client=self.lm_client
+            )
+            all_metrics.append(metrics)
         
-        if basic_variants:
-            # Select best basic variant by SumScore
-            best_idx = max(range(len(basic_variants)), 
-                          key=lambda i: basic_metrics[i].get("sum_score", 0))
-            best_variant = basic_variants[best_idx]
-            best_metrics = basic_metrics[best_idx]
+        if all_variants:
+            # Select best variant by SumScore
+            best_idx = max(range(len(all_variants)), 
+                          key=lambda i: all_metrics[i].get("sum_score", 0))
+            best_variant = all_variants[best_idx]
+            best_metrics = all_metrics[best_idx]
             self.log_execution(f"Selected best basic variant (index {best_idx}) with SumScore={best_metrics.get('sum_score', 0):.3f}")
         else:
             # Fallback to summary if no basic variants

@@ -11,11 +11,13 @@ from typing import List
 # 1 = пропустить уже обработанные файлы, загрузить только существующие метрики в веб-монитор
 # 0 = переобработать все файлы из inputs/, очистить веб-монитор перед началом
 ПРОПУСК_ОБРАБОТАННЫХ = 1
+
+
 # --- Общие ---
 MODEL_NAME = "gemma-3-12b-it"
 LMSTUDIO_URL = "http://localhost:1234/v1"
-REQUEST_TIMEOUT = 150
-MAX_RETRIES = 3
+REQUEST_TIMEOUT = 200
+MAX_RETRIES = 2
 
 # --- Logging ---
 LOGS_DIR = Path("logs")
@@ -24,11 +26,12 @@ ENABLE_DATE_FOLDERS = True
 DATE_FORMAT = "DDMMYY"  # Format: 220426 for April 22, 2026
 
 # --- Коррекция ---
-LEV_WEIGHT = 0.3
+WER_WEIGHT = 0.4
+LEV_WEIGHT = 10.0
 PERPLEXITY_WEIGHT = 0.2
 DELTA_LEV_THRESHOLD = 0.02
-MAX_LEV_RETRY_ATTEMPTS = 3
-LEV_RETRY_TEMPS = [0.2, 0.5, 0.8]
+MAX_LEV_RETRY_ATTEMPTS = 2
+LEV_RETRY_TEMPS = [0.1, 0.8]
 USE_FEW_SHOT_PROMPT = True
 USE_CHAIN_OF_THOUGHT_PROMPT = True
 DYNAMIC_TEMPERATURES_ENABLED = False
@@ -42,8 +45,8 @@ CORRECTION_TEMPERATURES = [0.7]
 SUMMARY_TEMPERATURES = [0.7]
 GEVAL_WEIGHT = 0.25
 LLM_JUDGE_WEIGHT = 0.2
-METEOR_WEIGHT = 0.35
-BERT_SCORE_WEIGHT = 0.2
+METEOR_WEIGHT = 0.4
+BERT_SCORE_WEIGHT = 0.25
 SUMMARIZATION_ATTEMPTS = 1
 
 # --- Simplified prompts ---
@@ -67,6 +70,7 @@ PROMPT_CACHE_MIN_IMPROVEMENT = 0.05
 
 # --- Пути ---
 DATA_DIR = Path("data")
+FULL_METRICS_DIR = DATA_DIR / "full_metrics"
 CORRECTION_METRICS_DIR = DATA_DIR / "correction_metrics"
 SUMMARY_METRICS_DIR = DATA_DIR / "summary_metrics"
 CORRECTION_DIR = DATA_DIR / "correction"
@@ -149,38 +153,40 @@ GEVAL_PROMPT = """Оцени качество следующего суммар�
 - Проверь наличие ключевых именованных сущностей из оригинала
 - Оцени информативность и фактическую точность
 
-Верни только число от 0 до 1."""
+Предоставь оценку в следующем формате:
+Score: [число от 0 до 1]
+Explanation: [конкретное объяснение оценки на русском языке]"""
 
-LLM_JUDGE_PROMPT = """Evaluate the quality of the following summary text CRITICALLY on a scale of 1 to 10, where 10 is excellent.
+LLM_JUDGE_PROMPT = """Оцени качество следующего краткого изложения КРИТИЧЕСКИ по шкале от 1 до 10, где 10 - отлично.
 
-Original text: {original_text}
-Summary: {summary_text}
+Оригинальный текст: {original_text}
+Краткое изложение: {summary_text}
 {reference_summary}
 
-SCORING GUIDELINES - BE PRECISE:
-1-3: Poor summary - major inaccuracies, missing key information, poorly written
-4-6: Average summary - some inaccuracies, moderate coverage, decent writing
-7-8: Good summary - mostly accurate, good coverage, well-written
-9-10: Excellent summary - highly accurate, comprehensive, perfectly written
+КРИТЕРИИ ОЦЕНКИ - БУДЬ ТОЧНЫМ:
+1-3: Плохое изложение - серьезные неточности, упущена ключевая информация, написано плохо
+4-6: Среднее изложение - некоторые неточности, умеренное покрытие, написано приемлемо
+7-8: Хорошее изложение - в основном точно, хорошее покрытие, написано хорошо
+9-10: Отличное изложение - высокая точность, исчерпывающее, написано идеально
 
-Evaluation criteria:
-1. Accuracy - how accurately the summary reflects the original content
-2. Completeness - how well the main ideas are covered
-3. Conciseness - how briefly the content is presented
-4. Clarity - how clear and readable the text is
-5. Reference alignment - how well it matches the reference summary (if provided)
-6. Named entities - preservation of important names, dates, places, organizations
+Критерии оценки:
+1. Точность - насколько точно изложение отражает исходное содержание
+2. Полнота - насколько хорошо раскрыты основные идеи
+3. Краткость - насколько кратко представлено содержание
+4. Ясность - насколько ясный и читаемый текст
+5. Соответствие эталону - насколько хорошо соответствует эталонному изложению (если предоставлено)
+6. Именованные сущности - сохранение важных имен, дат, мест, организаций
 
-CRITICAL EVALUATION REQUIREMENTS:
-- Do NOT give default middle scores (7-8) unless truly deserved
-- Be strict about factual accuracy and completeness
-- Penalize summaries that miss important named entities
-- Compare carefully with reference summary if provided
-- Consider if summary adds incorrect information
+ТРЕБОВАНИЯ К КРИТИЧЕСКОЙ ОЦЕНКЕ:
+- НЕ ставь средние оценки (7-8) по умолчанию, если они действительно не заслужены
+- Будь строгим в отношении фактической точности и полноты
+- Штрафуй изложения, которые упускают важные именованные сущности
+- Внимательно сравнивай с эталонным изложением, если оно предоставлено
+- Учитывай, добавляет ли изложение неверную информацию
 
-Provide your evaluation in this format:
-Score: [number from 1 to 10]
-Explanation: [specific explanation of why you gave this score, mentioning strengths and weaknesses]"""
+Предоставь оценку в следующем формате:
+Score: [число от 1 до 10]
+Explanation: [конкретное объяснение, почему ты поставил эту оценку, упомяни сильные и слабые стороны]"""
 
 # --- Пороги качества ---
 CORRECTION_THRESHOLDS = {
@@ -190,7 +196,7 @@ CORRECTION_THRESHOLDS = {
 }
 
 SUMMARY_THRESHOLDS = {
-    "excellent": 0.8,
+    "excellent": 0.85,
     "good": 0.6,
     "satisfactory": 0.4
 }

@@ -275,7 +275,7 @@ class Orchestrator:
         llm_judge_score = metrics.get("llm_judge", 0)
         
         # Quality assessment based on SumScore and other metrics
-        if sum_score >= 0.8 and geval_score >= 0.8 and llm_judge_score >= 7:
+        if sum_score >= 0.85 and geval_score >= 0.8 and llm_judge_score >= 7:
             return "ОТЛИЧНО"
         elif sum_score >= 0.6 and geval_score >= 0.6 and llm_judge_score >= 6:
             return "ХОРОШО"
@@ -445,6 +445,7 @@ class Orchestrator:
             # Создание директорий
             config.CORRECTION_DIR.mkdir(parents=True, exist_ok=True)
             config.SUMMARY_DIR.mkdir(parents=True, exist_ok=True)
+            config.FULL_METRICS_DIR.mkdir(parents=True, exist_ok=True)
             config.CORRECTION_METRICS_DIR.mkdir(parents=True, exist_ok=True)
             config.SUMMARY_METRICS_DIR.mkdir(parents=True, exist_ok=True)
             

@@ -57,9 +57,14 @@ class CorrectorEnsemble(BaseAgent):
         
         # Вычисление исходных метрик
         if reference_text:
-            # Для исходных метрик сравниваем Incorrect vs Etalon
+            # Исходные метрики показывают качество Incorrect текста
+            # WER должен быть высоким для плохого текста, Lev низким
             original_wer = self.metrics_calculator.calculate_wer(reference_text, input_text)
             original_lev = self.metrics_calculator.calculate_lev_rating(reference_text, input_text)
+            
+            # Для исходных метрик инвертируем логику:
+            # Если текст плохой (WER высокий, Lev низкий) - это ожидаемо
+            # Если текст хороший (WER низкий, Lev высокий) - это странно для Incorrect
             
             original_metrics = {
                 "wer_original": original_wer,
@@ -177,8 +182,8 @@ class CorrectorEnsemble(BaseAgent):
             )
             tasks.append(task)
         
-        # 1 Few-shot prompt (from 3 examples)
-        if config.USE_FEW_SHOT_PROMPT:
+        # 1 Few-shot prompt (from 3 examples) - только для коротких текстов
+        if config.USE_FEW_SHOT_PROMPT and len(input_text) < 1500:
             few_shot_prompt = self._build_few_shot_prompt(input_text)
             task = self._generate_single_correction(
                 input_text=input_text,
@@ -189,9 +194,11 @@ class CorrectorEnsemble(BaseAgent):
                 original_metrics=original_metrics
             )
             tasks.append(task)
+        elif config.USE_FEW_SHOT_PROMPT and len(input_text) >= 1500:
+            self.log_execution("Few-shot prompt skipped - text too long (>1500 chars)")
         
-        # 1 Chain-of-Thought prompt
-        if config.USE_CHAIN_OF_THOUGHT_PROMPT:
+        # 1 Chain-of-Thought prompt - только для коротких текстов
+        if config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) < 1500:
             cot_prompt = self._build_cot_prompt(input_text)
             task = self._generate_single_correction(
                 input_text=input_text,
@@ -202,6 +209,8 @@ class CorrectorEnsemble(BaseAgent):
                 original_metrics=original_metrics
             )
             tasks.append(task)
+        elif config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) >= 1500:
+            self.log_execution("CoT prompt skipped - text too long (>1500 chars)")
         
         # Выполнение всех задач
         try:
@@ -419,8 +428,9 @@ class CorrectorEnsemble(BaseAgent):
         if best_prompt:
             prompts.append(best_prompt)
         
-        # Добавляем стандартные промпты как запасные
+        # Добавляем стандартные промпты как запасные (промпт №2 первым)
         prompts.extend([
+            "Промпт №2: Внимательно проанализируй текст и исправь все орфографические, пунктуационные и грамматические ошибки. Сохраняй оригинальный стиль и смысл. Особое внимание удели именам собственным, датам, числам и терминам: {text}",
             "Исправь все ошибки в тексте, сохраняя смысл: {text}",
             "Отредактируй текст для исправления ошибок: {text}"
         ])
@@ -466,7 +476,7 @@ class CorrectorEnsemble(BaseAgent):
             # Debug logging
             delta_wer = original_wer - corrected_wer
             delta_lev = corrected_lev - original_lev
-            expected_score = delta_wer + delta_lev * 10 + (1 - min(perplexity, 100) / 100) * 0.2
+            expected_score = delta_wer * config.WER_WEIGHT + delta_lev * config.LEV_WEIGHT + (1 - min(perplexity, 100) / 100) * config.PERPLEXITY_WEIGHT
             
                         
             composite_score = self.metrics_calculator.calculate_cor_score(
@@ -525,13 +535,24 @@ class CorrectorEnsemble(BaseAgent):
         attempts = 0
         best_variant = current_best
         
-        # Последовательность попыток
-        attempt_strategies = [
-            ("few-shot", self._build_few_shot_prompt(input_text), 0.3),
-            ("CoT", self._build_cot_prompt(input_text), 0.5),
-            ("high_temp", f"Исправь ошибки: {{text}}", 0.9),
-            ("saved", self._get_saved_prompts()[0] if self._get_saved_prompts() else f"Исправь: {{text}}", 0.4)
-        ]
+        # Последовательность попыток - адаптивная под длину текста
+        attempt_strategies = []
+        
+        if len(input_text) < 2000:
+            # Для коротких текстов используем все стратегии
+            attempt_strategies = [
+                ("few-shot", self._build_few_shot_prompt(input_text), 0.3),
+                ("CoT", self._build_cot_prompt(input_text), 0.5),
+                ("high_temp", f"Исправь ошибки: {{text}}", 0.9),
+                ("saved", self._get_saved_prompts()[0] if self._get_saved_prompts() else f"Исправь: {{text}}", 0.4)
+            ]
+        else:
+            # Для длинных текстов только простые стратегии
+            attempt_strategies = [
+                ("high_temp", f"Исправь ошибки: {{text}}", 0.9),
+                ("saved", self._get_saved_prompts()[0] if self._get_saved_prompts() else f"Исправь: {{text}}", 0.4)
+            ]
+            self.log_execution("Using simplified strategies for long text (>2000 chars)")
         
         for strategy_name, prompt, temp in attempt_strategies:
             if attempts >= config.MAX_LEV_RETRY_ATTEMPTS:

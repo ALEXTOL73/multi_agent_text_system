@@ -49,13 +49,19 @@ python batch_processor.py --input-dir /path/to/inputs
 # Check what files are available
 python batch_processor.py --stats
 
-# Full processing
+### Slow processing
+
+```bashbashbashtextpython
 python batch_processor.py
+```
 
 # Only correction phase
+```bash
 python batch_processor.py --no-summarization
+```
 
 # Only summarization phase
+```bash
 python batch_processor.py --no-correction
 ```
 
@@ -141,7 +147,6 @@ Supported naming patterns for reference files:
 - Same name as incorrect file
 - `{name}_etalon.{ext}`
 - `{name}_correct.{ext}`
-- `{name}_reference.{ext}`
 
 ## Requirements
 
@@ -149,28 +154,32 @@ Supported naming patterns for reference files:
 2. **Input files** should be placed in `inputs/incorrect/`
 3. **Reference files** are optional but recommended for accurate metrics
 4. **Dependencies** must be installed: `pip install -r requirements.txt`
-
-## Troubleshooting
+5. **Troubleshooting**
 
 ### No Files Found
-```
+
+```bash
 No files found to process
 ```
+
 - Check that files exist in `inputs/incorrect/`
 - Verify file extensions (.txt, .md, .text)
 
 ### LM Studio Connection Error
-```
+
+```bash
 Error: Could not establish connection to LM Studio
 ```
+
 - Ensure LM Studio is running
 - Check that server is on port 1234
-- Verify model is loaded
 
 ### Memory Issues
-```
+
+```bash
 CUDA out of memory
 ```
+
 - Use a smaller model in LM Studio
 - Process files one at a time
 - Reduce batch size in configuration

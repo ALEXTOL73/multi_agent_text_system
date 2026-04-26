@@ -210,8 +210,8 @@ class MetricsCalculator:
             delta_wer = original_wer - corrected_wer
             delta_lev = corrected_lev - original_lev
             
-            # Formula: CorScore = deltaWER + deltaLev*10 + (1-Perpl/100)*0.2
-            cor_score = delta_wer + delta_lev * 10 + (1 - min(perplexity, 100) / 100) * 0.2
+            # Formula: CorScore = deltaWER*WER_WEIGHT + deltaLev*LEV_WEIGHT + (1-Perpl/100)*PERPLEXITY_WEIGHT
+            cor_score = delta_wer * config.WER_WEIGHT + delta_lev * config.LEV_WEIGHT + (1 - min(perplexity, 100) / 100) * config.PERPLEXITY_WEIGHT
             
             return cor_score
         except Exception as e:
@@ -296,7 +296,7 @@ class MetricsCalculator:
                              original_text: str,
                              summary_text: str,
                              lm_client,
-                             reference_summary: Optional[str] = None) -> float:
+                             reference_summary: Optional[str] = None) -> tuple[float, str]:
         """
         Расчет G-Eval с помощью LLM.
         
@@ -306,7 +306,7 @@ class MetricsCalculator:
             lm_client: Клиент LM Studio
             
         Returns:
-            G-Eval score в диапазоне [0, 1]
+            G-Eval score в диапазоне [0, 1] и объяснение на русском языке
         """
         try:
             # Format reference summary if provided
@@ -322,17 +322,24 @@ class MetricsCalculator:
                 prompt=prompt,
                 temperature=0.3,
                 max_tokens=1024,
-                system_prompt="You are an expert at evaluating text quality. Return only a number from 0 to 1 with decimal points."
+                system_prompt="Ты эксперт по оценке качества текста. Давай честные оценки и подробные объяснения на русском языке."
             )
             
-            # Извлечение числа из ответа
-            score_match = re.search(r'0?\.\d+|1\.0|0|1', response.strip())
+            # Извлечение числа и объяснения из ответа
+            score_match = re.search(r'Score:\s*(0?\.\d+|1\.0|0|1)', response.strip())
+            explanation_match = re.search(r'Explanation:\s*(.+)', response.strip(), re.DOTALL)
+            
             if score_match:
-                score = float(score_match.group())
-                return min(max(score, 0.0), 1.0)
+                score = float(score_match.group(1))
+                explanation = explanation_match.group(1).strip() if explanation_match else "Объяснение не предоставлено"
+                
+                # Логируем только оценку
+                self.logger.info(f"G-Eval Score: {score}")
+                
+                return min(max(score, 0.0), 1.0), explanation
             else:
                 self.logger.warning(f"Не удалось извлечь score из ответа: {response}")
-                return 0.5
+                return 0.5, "Объяснение не предоставлено"
                 
         except Exception as e:
             self.logger.error(f"Ошибка расчета G-Eval: {e}")
@@ -368,7 +375,7 @@ class MetricsCalculator:
                 prompt=prompt,
                 temperature=0.7,
                 max_tokens=1024,
-                system_prompt="You are a strict and precise evaluator of text summaries. Give honest, varied scores from 1 to 10 based on actual quality. Don't default to middle scores. Be critical in your evaluation."
+                system_prompt="Ты строгий и точный оценщик кратких изложений текста. Давай честные, разнообразные оценки от 1 до 10 на основе реального качества. Не ставь средние оценки по умолчанию. Будь критичным в своей оценке."
             )
             
             # Извлечение числа и объяснения из ответа
@@ -530,11 +537,12 @@ class MetricsCalculator:
                 llm_judge_task = self.calculate_llm_judge(original_text, summary_text, lm_client, reference_summary)
                 
                 # Ждем выполнения обеих задач
-                geval_score, (llm_judge_score, llm_judge_explanation) = await asyncio.gather(
+                (geval_score, geval_explanation), (llm_judge_score, llm_judge_explanation) = await asyncio.gather(
                     geval_task, llm_judge_task
                 )
                 
                 metrics["geval"] = geval_score
+                metrics["geval_explanation"] = geval_explanation
                 metrics["llm_judge"] = llm_judge_score
                 metrics["llm_judge_explanation"] = llm_judge_explanation
                 

@@ -137,8 +137,8 @@ class SummarizerEnsemble(BaseAgent):
             )
             tasks.append(task)
         
-        # 1 Few-shot prompt (from 3 examples)
-        if config.USE_FEW_SHOT_PROMPT:
+        # 1 Few-shot prompt (from 3 examples) - только для коротких текстов
+        if config.USE_FEW_SHOT_PROMPT and len(input_text) < 1500:
             few_shot_prompt = self._build_few_shot_prompt(input_text)
             task = self._generate_single_summary(
                 input_text=input_text,
@@ -148,9 +148,11 @@ class SummarizerEnsemble(BaseAgent):
                 reference_summary=reference_summary
             )
             tasks.append(task)
+        elif config.USE_FEW_SHOT_PROMPT and len(input_text) >= 1500:
+            self.log_execution("Few-shot summary prompt skipped - text too long (>1500 chars)")
         
-        # 1 Chain-of-Thought prompt
-        if config.USE_CHAIN_OF_THOUGHT_PROMPT:
+        # 1 Chain-of-Thought prompt - только для коротких текстов
+        if config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) < 1500:
             cot_prompt = self._build_cot_summary_prompt(input_text)
             task = self._generate_single_summary(
                 input_text=input_text,
@@ -160,6 +162,8 @@ class SummarizerEnsemble(BaseAgent):
                 reference_summary=reference_summary
             )
             tasks.append(task)
+        elif config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) >= 1500:
+            self.log_execution("CoT summary prompt skipped - text too long (>1500 chars)")
         
         # Выполнение всех задач
         try:
@@ -343,8 +347,9 @@ class SummarizerEnsemble(BaseAgent):
         
         prompts = []
         
-        # Добавляем стандартные промпты как запасные
+        # Добавляем стандартные промпты как запасные (промпт №2 первым)
         prompts.extend([
+            "Промпт №2: Создай краткую, но информативную суммаризацию текста, сохраняя все ключевые факты, имена, даты и числа. Особое внимание удели структуре и логике изложения. Суммаризация должна быть на 70% короче оригинала: {text}",
             "Создай краткое изложение основных идей текста: {text}",
             "Выдели главное из текста и представь в сжатой форме: {text}",
             "Суммаризируй ключевые моменты текста: {text}"

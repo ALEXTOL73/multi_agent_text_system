@@ -17,7 +17,7 @@ import webbrowser
 import time
 
 # Disable progress bars and verbose output from ML libraries
-os.environ["TOKENIZERS_PARALLELISM"] = "false"
+os.environ["TOKENIZERS_PARALLELISM"] = "true"
 os.environ["TRANSFORMERS_VERBOSITY"] = "error"
 os.environ["HF_HUB_DISABLE_TELEMETRY"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
@@ -487,7 +487,7 @@ def print_batch_results(results: dict, file_type: str):
             
             # Highlight SumScore with quality assessment
             if isinstance(sum_score, (int, float)):
-                sum_quality = "EXCELLENT" if sum_score > 0.8 else "GOOD" if sum_score > 0.6 else "BAD"
+                sum_quality = "EXCELLENT" if sum_score > 0.85 else "GOOD" if sum_score > 0.6 else "BAD"
                 print(f"        SumScore: {sum_score:.4f} [{sum_quality}]")
             else:
                 print(f"        SumScore: {sum_score}")
@@ -574,6 +574,7 @@ async def process_text_file(input_file: str,
         Path("data/summary").mkdir(parents=True, exist_ok=True)
         Path("data/correction_metrics").mkdir(parents=True, exist_ok=True)
         Path("data/summary_metrics").mkdir(parents=True, exist_ok=True)
+        Path("data/full_metrics").mkdir(parents=True, exist_ok=True)
         
         # Save correction results
         if "corrected_text" in results and "input_text" in results:
@@ -583,6 +584,9 @@ async def process_text_file(input_file: str,
             
             # Save correction metrics to correction_metrics folder
             correction_metrics_file = f"data/correction_metrics/{filename}.json"
+            
+            # Also save correction metrics to full_metrics folder
+            correction_metrics_full_file = f"data/full_metrics/correction_{filename}.json"
             
             # Calculate processing time for correction
             start_time = results.get("start_time")
@@ -608,6 +612,10 @@ async def process_text_file(input_file: str,
             }
             with open(correction_metrics_file, 'w', encoding='utf-8') as f:
                 json.dump(correction_metrics, f, ensure_ascii=False, indent=2)
+            
+            # Also save to full_metrics folder
+            with open(correction_metrics_full_file, 'w', encoding='utf-8') as f:
+                json.dump(correction_metrics, f, ensure_ascii=False, indent=2)
         
         # Save summary results
         if "summary" in results:
@@ -620,6 +628,9 @@ async def process_text_file(input_file: str,
             
             # Save detailed summary metrics to summary_metrics folder (JSON with LLM explanations)
             summary_metrics_file = f"data/summary_metrics/{filename}.json"
+            
+            # Also save summary metrics to full_metrics folder
+            summary_metrics_full_file = f"data/full_metrics/summary_{filename}.json"
             
             # Calculate processing time
             start_time = results.get("start_time")
@@ -645,11 +656,19 @@ async def process_text_file(input_file: str,
             }
             with open(summary_metrics_file, 'w', encoding='utf-8') as f:
                 json.dump(summary_metrics, f, ensure_ascii=False, indent=2)
+            
+            # Also save to full_metrics folder
+            with open(summary_metrics_full_file, 'w', encoding='utf-8') as f:
+                json.dump(summary_metrics, f, ensure_ascii=False, indent=2)
         
         # Also save combined results to original output file
         save_results_to_file(results, output_file)
     
-    return results
+    # Return results with state for metrics table
+    return {
+        "results": results,
+        "state": results  # Use results as state since orchestrator returns metrics in results
+    }
 
 async def process_batch_files(domain: str = "general", 
                            enable_correction: bool = True, 
@@ -782,14 +801,16 @@ async def process_batch_files(domain: str = "general",
             reference_file=reference_file,
             reference_summary_file=summary_file,
             domain=domain,
-            output_file=f"data/{file_path.stem}.json",
+            output_file=str(config.FULL_METRICS_DIR / f"{file_path.stem}.json"),
             enable_correction=file_enable_correction,
             enable_summarization=enable_summarization
         )
         
         if file_results:
             results[file_path.name] = file_results
-            print_batch_results(file_results, file_type)
+            # Extract actual results for display
+            actual_results = file_results.get("results", file_results)
+            print_batch_results(actual_results, file_type)
             print(f" File {file_path.name} processed successfully")
             
             # Update metrics in realtime store and table
@@ -859,6 +880,24 @@ async def main():
     
     # Initialize metrics table manager
     metrics_manager = MetricsTableManager()
+    
+    # Start monitoring time when main.py starts
+    try:
+        import urllib.request
+        import json
+        
+        data = json.dumps({}).encode('utf-8')
+        req = urllib.request.Request(
+            'http://127.0.0.1:5000/api/start_monitoring',
+            data=data,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        with urllib.request.urlopen(req, timeout=5) as response:
+            if response.getcode() == 200:
+                print("Monitoring time started from main.py")
+    except Exception as e:
+        print(f"Warning: Could not start monitoring time: {e}")
     
     # Process all files from inputs/ directory
     results = await process_batch_files(

@@ -58,9 +58,30 @@ class MetricsTableManager:
         
         self.logger = logging.getLogger(__name__)
     
-    def _load_existing_table(self) -> Optional[pd.DataFrame]:
+    def _extract_doc_number(self, filename: str) -> int:
         """
-        Load existing metrics table if it exists.
+        Extract document number from filename for sorting.
+        
+        Args:
+            filename: Name of the file (e.g., "1_0167_0-60%_2023.txt")
+            
+        Returns:
+            Document number as integer (e.g., 1)
+        """
+        try:
+            # Extract FIRST number from filename like "1_0167_0-60%_2023.txt"
+            # Pattern: first number at start of filename
+            import re
+            match = re.search(r'^(\d+)_', filename)
+            if match:
+                return int(match.group(1))
+            return 0
+        except Exception:
+            return 0
+    
+    def load_table(self) -> Optional[pd.DataFrame]:
+        """
+        Load existing metrics table from Excel file and sort by document number.
         
         Returns:
             DataFrame with existing data or None if file doesn't exist
@@ -68,12 +89,25 @@ class MetricsTableManager:
         if self.table_file.exists():
             try:
                 df = pd.read_excel(self.table_file)
+                # Sort by document number
+                if "filename" in df.columns:
+                    df["doc_number"] = df["filename"].apply(self._extract_doc_number)
+                    df = df.sort_values("doc_number", ascending=True)
+                    df = df.drop(columns=["doc_number"])  # Remove temporary column
                 self.logger.info(f"Loaded existing metrics table with {len(df)} rows")
                 return df
             except Exception as e:
                 self.logger.error(f"Error loading metrics table: {e}")
                 return None
-        return None
+    
+    def _load_existing_table(self) -> Optional[pd.DataFrame]:
+        """
+        Load existing metrics table if it exists.
+        
+        Returns:
+            DataFrame with existing data or None if file doesn't exist
+        """
+        return self.load_table()
     
     def _extract_metrics_from_state(self, state: Dict[str, Any], filename: str) -> Dict[str, Any]:
         """
@@ -88,11 +122,16 @@ class MetricsTableManager:
         """
         metrics = {"filename": filename}
         
+                
+                
         # Correction metrics - extract from different possible locations
         correction_metrics = {}
         
         # Try different locations for correction metrics
-        if "correction_metrics" in state:
+        if "metrics_correction" in state:
+            correction_metrics = state["metrics_correction"]
+            self.logger.info("Found metrics_correction")
+        elif "correction_metrics" in state:
             correction_metrics = state["correction_metrics"]
         elif "metrics" in state and "correction" in state["metrics"]:
             correction_metrics = state["metrics"]["correction"]
@@ -100,27 +139,42 @@ class MetricsTableManager:
             best_variant = state["best_correction_variant"]
             if isinstance(best_variant, dict) and "metrics" in best_variant:
                 correction_metrics = best_variant["metrics"]
+        elif "correction_variants" in state:
+            variants = state["correction_variants"]
+            if variants and len(variants) > 0:
+                best_variant = variants[0]  # Take first variant as best
+                if isinstance(best_variant, dict) and "metrics" in best_variant:
+                    correction_metrics = best_variant["metrics"]
+        elif "correction_results" in state:
+            correction_results = state["correction_results"]
+            if isinstance(correction_results, dict) and "metrics" in correction_results:
+                correction_metrics = correction_results["metrics"]
         
         if correction_metrics:
             metrics["delta_WER"] = correction_metrics.get("delta_wer", 0)
-            metrics["Lev_Rating"] = correction_metrics.get("lev_rating", 0) 
+            metrics["Lev_Rating"] = correction_metrics.get("lev_corrected", 0) 
             metrics["delta_Lev"] = correction_metrics.get("delta_lev", 0)
             metrics["Perplexity"] = correction_metrics.get("perplexity", 0)
             metrics["CorScore"] = correction_metrics.get("cor_score", 0)
-            
-            # Best prompt type for correction
-            best_prompt_cor = state.get("best_prompt_type_cor", "basic")
-            if "best_correction_variant" in state:
-                best_variant = state["best_correction_variant"]
-                if isinstance(best_variant, dict) and "prompt_type" in best_variant:
-                    best_prompt_cor = best_variant["prompt_type"]
-            metrics["best_prompt_cor"] = self.prompt_type_mapping.get(best_prompt_cor, 1)
+        
+        # Best prompt type for correction - извлекать всегда!
+        best_prompt_cor = state.get("best_prompt_type_cor", "basic")
+        if "best_correction_variant" in state:
+            best_variant = state["best_correction_variant"]
+            if isinstance(best_variant, dict) and "prompt_type" in best_variant:
+                best_prompt_cor = best_variant["prompt_type"]
+        metrics["best_prompt_cor"] = self.prompt_type_mapping.get(best_prompt_cor, 1)
         
         # Summarization metrics - extract from different possible locations
         summarization_metrics = {}
         
         # Try different locations for summarization metrics
-        if "summarization_metrics" in state:
+        if "summary_metrics" in state:
+            summarization_metrics = state["summary_metrics"]
+            self.logger.info("Found summary_metrics")
+        elif "metrics_summary" in state:
+            summarization_metrics = state["metrics_summary"]
+        elif "summarization_metrics" in state:
             summarization_metrics = state["summarization_metrics"]
         elif "metrics" in state and "summarization" in state["metrics"]:
             summarization_metrics = state["metrics"]["summarization"]
@@ -128,6 +182,16 @@ class MetricsTableManager:
             best_variant = state["best_summary_variant"]
             if isinstance(best_variant, dict) and "metrics" in best_variant:
                 summarization_metrics = best_variant["metrics"]
+        elif "summary_variants" in state:
+            variants = state["summary_variants"]
+            if variants and len(variants) > 0:
+                best_variant = variants[0]  # Take first variant as best
+                if isinstance(best_variant, dict) and "metrics" in best_variant:
+                    summarization_metrics = best_variant["metrics"]
+        elif "summary_results" in state:
+            summary_results = state["summary_results"]
+            if isinstance(summary_results, dict) and "metrics" in summary_results:
+                summarization_metrics = summary_results["metrics"]
         
         if summarization_metrics:
             metrics["G_Eval"] = summarization_metrics.get("geval", summarization_metrics.get("g_eval", 0))
@@ -135,14 +199,14 @@ class MetricsTableManager:
             metrics["LLM_Judge"] = summarization_metrics.get("llm_judge", summarization_metrics.get("llm_judge", 0))
             metrics["BertScore"] = summarization_metrics.get("bert_score", summarization_metrics.get("bertscore", 0))
             metrics["SumScore"] = summarization_metrics.get("sum_score", summarization_metrics.get("sumscore", 0))
-            
-            # Best prompt type for summarization
-            best_prompt_sum = state.get("best_prompt_type_sum", "basic")
-            if "best_summary_variant" in state:
-                best_variant = state["best_summary_variant"]
-                if isinstance(best_variant, dict) and "prompt_type" in best_variant:
-                    best_prompt_sum = best_variant["prompt_type"]
-            metrics["best_prompt_sum"] = self.prompt_type_mapping.get(best_prompt_sum, 1)
+        
+        # Best prompt type for summarization - извлекать всегда!
+        best_prompt_sum = state.get("best_prompt_sum", state.get("best_prompt_type_sum", "basic"))
+        if "best_summary_variant" in state:
+            best_variant = state["best_summary_variant"]
+            if isinstance(best_variant, dict) and "prompt_type" in best_variant:
+                best_prompt_sum = best_variant["prompt_type"]
+        metrics["best_prompt_sum"] = self.prompt_type_mapping.get(best_prompt_sum, 1)
         
         return metrics
     
@@ -227,6 +291,10 @@ class MetricsTableManager:
                         for col in self.columns:
                             if col in new_metrics:
                                 existing_df.loc[existing_df["filename"] == filename, col] = new_metrics[col]
+                        # Sort by document number before saving
+                        existing_df["doc_number"] = existing_df["filename"].apply(self._extract_doc_number)
+                        existing_df = existing_df.sort_values("doc_number", ascending=True)
+                        existing_df = existing_df.drop(columns=["doc_number"])
                         existing_df.to_excel(self.table_file, index=False)
                         self.logger.info(f"Updated metrics for {filename} (improved)")
                     else:
@@ -235,6 +303,10 @@ class MetricsTableManager:
                     # Add new row
                     new_row = pd.DataFrame([new_metrics], columns=self.columns)
                     updated_df = pd.concat([existing_df, new_row], ignore_index=True)
+                    # Sort by document number before saving
+                    updated_df["doc_number"] = updated_df["filename"].apply(self._extract_doc_number)
+                    updated_df = updated_df.sort_values("doc_number", ascending=True)
+                    updated_df = updated_df.drop(columns=["doc_number"])
                     updated_df.to_excel(self.table_file, index=False)
                     self.logger.info(f"Added new metrics for {filename}")
                     

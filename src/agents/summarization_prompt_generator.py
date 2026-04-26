@@ -134,7 +134,7 @@ class SummarizationPromptGenerator(BaseAgent):
         if static_examples:
             if detected_language == "ru":
                 prompt_parts.append("Создай эффективный промпт для суммаризации русского текста.")
-                prompt_parts.append("Резюме должно содержать не более 5 предложений.")
+                prompt_parts.append("Резюме должно содержать не более 3-4 предложений.")
                 prompt_parts.append("Примеры хороших промптов:")
                 
                 for i, example in enumerate(static_examples, 1):
@@ -149,7 +149,7 @@ class SummarizationPromptGenerator(BaseAgent):
         else:
             if detected_language == "ru":
                 prompt_parts.append("Создай эффективный промпт для суммаризации русского текста.")
-                prompt_parts.append("Резюме должно содержать не более 5 предложений.")
+                prompt_parts.append("Резюме должно содержать не более 3-4 предложений.")
                 prompt_parts.append("Примеры хороших промптов:")
             else:
                 prompt_parts.append("Create an effective prompt for text summarization.")
@@ -184,7 +184,7 @@ class SummarizationPromptGenerator(BaseAgent):
             Промпт должен:
             1. Быть четким и конкретным
             2. Сохранять ключевые идеи и факты
-            3. Создавать суммаризацию ровно из 5 предложений
+            3. Создавать суммаризацию ровно из 3-4 предложений
             4. Содержать плейсхолдер {input_text} для вставки текста
             5. НИКОГДА не упоминать ограничения по количеству символов, знаков или байт
             

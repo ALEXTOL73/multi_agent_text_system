@@ -246,7 +246,7 @@ class AdaptiveAgent:
         # Add context-specific instructions
         text_length = len(context.get('input_text', ''))
         
-        if text_length > 1000:
+        if text_length > 1500:
             customization = " Focus on maintaining coherence in long texts."
         elif text_length < 100:
             customization = " Ensure comprehensive coverage despite brevity."

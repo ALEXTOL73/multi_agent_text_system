@@ -59,47 +59,31 @@ class CorrectorAggregator(BaseAgent):
                            aggregation_reason="insufficient_variants")
             return state
         
-        # Select best basic variant from ensemble
-        basic_variants = []
-        basic_metrics = []
+        # Select best variant from ensemble
+        all_variants = []
+        all_metrics = []
         
-        # Find basic variants and their metrics
+        # Find all variants and their metrics
         for i, (output, prompt_type) in enumerate(zip(ensemble_outputs, ensemble_prompts)):
-            if prompt_type == "basic":
-                basic_variants.append(output)
-                # Calculate metrics for this basic variant
-                metrics = self.metrics_calculator.calculate_correction_metrics(
-                    original_text=input_text,
-                    corrected_text=output,
-                    reference_text=reference_text
-                )
-                basic_metrics.append(metrics)
+            # Включаем все варианты для выбора лучшего по CorScore
+            all_variants.append(output)
+            # Calculate metrics for this variant
+            metrics = self.metrics_calculator.calculate_correction_metrics(
+                original_text=input_text,
+                corrected_text=output,
+                reference_text=reference_text
+            )
+            all_metrics.append(metrics)
         
-        if basic_variants:
-            # Select best basic variant with priority deltaLev>0.05 and deltaWER>0.1
-            priority_indices = []
-            for i, metrics in enumerate(basic_metrics):
-                delta_wer = metrics.get("wer_original", 1.0) - metrics.get("wer_corrected", 1.0)
-                delta_lev = metrics.get("lev_corrected", 0.0) - metrics.get("lev_original", 0.0)
-                
-                if delta_lev > 0.05 and delta_wer > 0.1:
-                    priority_indices.append(i)
-            
-            if priority_indices:
-                # Choose best among priority variants by CorScore
-                best_idx = max(priority_indices, key=lambda i: basic_metrics[i].get("cor_score", 0))
-                best_metrics = basic_metrics[best_idx]
-                delta_wer = best_metrics.get("wer_original", 1.0) - best_metrics.get("wer_corrected", 1.0)
-                delta_lev = best_metrics.get("lev_corrected", 0.0) - best_metrics.get("lev_original", 0.0)
-                self.log_execution(f"Selected priority variant (index {best_idx}) with deltaLev={delta_lev:.3f}, deltaWER={delta_wer:.3f}, CorScore={best_metrics.get('cor_score', 0):.3f}")
-            else:
-                # Fallback to best by CorScore
-                best_idx = max(range(len(basic_variants)), 
-                              key=lambda i: basic_metrics[i].get("cor_score", 0))
-                best_metrics = basic_metrics[best_idx]
-                self.log_execution(f"No priority variants found, selected best by CorScore (index {best_idx}) with CorScore={best_metrics.get('cor_score', 0):.3f}")
-            
-            best_variant = basic_variants[best_idx]
+        if all_variants:
+            # Select best variant by CorScore (простая и надежная логика)
+            best_idx = max(range(len(all_variants)), 
+                          key=lambda i: all_metrics[i].get("cor_score", 0))
+            best_variant = all_variants[best_idx]
+            best_metrics = all_metrics[best_idx]
+            delta_wer = best_metrics.get("wer_original", 1.0) - best_metrics.get("wer_corrected", 1.0)
+            delta_lev = best_metrics.get("lev_corrected", 0.0) - best_metrics.get("lev_original", 0.0)
+            self.log_execution(f"Selected best variant (index {best_idx}) with deltaLev={delta_lev:.3f}, deltaWER={delta_wer:.3f}, CorScore={best_metrics.get('cor_score', 0):.3f}")
         else:
             # Fallback to corrected_text if no basic variants
             best_variant = corrected_text

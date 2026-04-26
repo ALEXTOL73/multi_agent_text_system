@@ -24,7 +24,29 @@ INPUT_DIR = ROOT_DIR / "inputs"          # ← здесь s на конце
 
 # ---------- Глобальные переменные ----------
 system_start_time = datetime.now()
+monitoring_start_time = None  # Время начала обработки
 monitoring_active = True
+processing_complete = False
+
+def reset_monitor_time():
+    """Сбрасывает время монитора до текущего момента"""
+    global system_start_time
+    system_start_time = datetime.now()
+    print(f"Monitor time reset to: {system_start_time}")
+
+def start_monitoring_time():
+    """Начинает время мониторинга при первой метрике"""
+    global monitoring_start_time, processing_complete
+    if monitoring_start_time is None:
+        monitoring_start_time = datetime.now()
+        processing_complete = False
+        print(f"Monitoring started at: {monitoring_start_time}")
+
+def stop_monitoring_time():
+    """Останавливает время мониторинга после последнего файла"""
+    global processing_complete
+    processing_complete = True
+    print(f"Monitoring stopped - processing complete")
 
 def load_metrics_from_files():
     """Загружает метрики из JSON-файлов (поддерживает оба формата)."""
@@ -120,7 +142,22 @@ def load_metrics_from_files():
                         }
             except Exception as e:
                 pass
-    return metrics_dict
+    
+    # Sort metrics by document number
+    def extract_doc_number(test_id):
+        """Extract document number from test_id for sorting."""
+        try:
+            import re
+            match = re.search(r'^(\d+)_', test_id)
+            if match:
+                return int(match.group(1))
+            return 0
+        except Exception:
+            return 0
+    
+    # Sort dictionary by document number
+    sorted_items = sorted(metrics_dict.items(), key=lambda x: extract_doc_number(x[0]))
+    return dict(sorted_items)
 
 def get_total_input_files():
     """Считает количество входных .txt файлов в inputs/incorrect/ или inputs/"""
@@ -325,7 +362,7 @@ HTML_TEMPLATE = """
             makeChart('chart-delta-wer', metricsList.map(m => m.delta_WER), 'ΔWER', '#f44336', -0.5, 1, 0.1);
             makeChart('chart-levrating', metricsList.map(m => m.LevRating_after), 'LevRating', '#4caf50', 0, 1, 0.7);
             makeChart('chart-perplexity', metricsList.map(m => m.Perplexity), 'Perplexity', '#9e9e9e', 0, 50, 10);
-            makeChart('chart-corscore', metricsList.map(m => m.CorScore), 'CorScore', '#ff9800', 0, 1, 0.5);
+            makeChart('chart-corscore', metricsList.map(m => m.CorScore), 'CorScore', '#ff9800', -1, 1, 0);
             makeChart('chart-geval', metricsList.map(m => m.G_Eval), 'G-Eval', '#2196f3', 0, 1, 0.5);
             makeChart('chart-meteor', metricsList.map(m => m.METEOR), 'METEOR', '#9c27b0', 0, 1, 0.25);
             makeChart('chart-llmjudge', metricsList.map(m => m.LLM_Judge), 'LLM-Judge', '#ff5722', 0, 10, 6);
@@ -479,9 +516,33 @@ def api_status():
             'processing_time_seconds': m.get('processing_time_seconds', 0)
         })
     
-    elapsed = (datetime.now() - system_start_time).total_seconds()
+    # Additional sorting by document number for charts
+    def extract_doc_number(test_id):
+        """Extract document number from test_id for sorting."""
+        try:
+            import re
+            match = re.search(r'^(\d+)_', test_id)
+            if match:
+                return int(match.group(1))
+            return 0
+        except Exception:
+            return 0
+    
+    metrics_list.sort(key=lambda x: extract_doc_number(x['id']))
+    
+    # Используем время мониторинга или системное время как запасной вариант
+    if monitoring_start_time and not processing_complete:
+        elapsed = (datetime.now() - monitoring_start_time).total_seconds()
+        status = 'running'
+    elif processing_complete:
+        elapsed = (monitoring_start_time and (datetime.now() - monitoring_start_time).total_seconds()) or 0
+        status = 'completed'
+    else:
+        elapsed = (datetime.now() - system_start_time).total_seconds()
+        status = 'idle'
+        
     return jsonify({
-        'status': 'running' if monitoring_active else 'idle',
+        'status': status,
         'total_files': total,
         'processed_files': processed,
         'remaining_files': remaining,
@@ -501,10 +562,10 @@ def export_excel():
             data.append({
                 'filename': test_id,
                 'delta_WER': m.get('delta_WER', 0),
-                'Lev_Rating': m.get('LevRating_after', 0),
+                'LevRating_after': m.get('LevRating', m.get('lev_corrected', 0)),
                 'delta_Lev': m.get('delta_Lev', 0),
                 'Perplexity': m.get('Perplexity', 0),
-                'CorScore': m.get('CorScore', 0),
+                'CorScore': m.get('CorScore', m.get('cor_score', 0)),
                 'G_Eval': m.get('G_Eval', 0),
                 'METEOR': m.get('METEOR', 0),
                 'LLM_Judge': m.get('LLM_Judge', 0),
@@ -512,6 +573,23 @@ def export_excel():
                 'SumScore': m.get('SumScore', 0)
             })
         df = pd.DataFrame(data)
+        
+        # Sort by document number before saving
+        def extract_doc_number(filename):
+            """Extract document number from filename for sorting."""
+            try:
+                import re
+                match = re.search(r'^(\d+)_', filename)
+                if match:
+                    return int(match.group(1))
+                return 0
+            except Exception:
+                return 0
+        
+        df["doc_number"] = df["filename"].apply(extract_doc_number)
+        df = df.sort_values("doc_number", ascending=True)
+        df = df.drop(columns=["doc_number"])
+        
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='openpyxl') as writer:
             df.to_excel(writer, sheet_name='Sheet1', index=False)
@@ -523,8 +601,17 @@ def export_excel():
 
 @app.route('/api/reset_time', methods=['POST'])
 def reset_time():
-    global system_start_time
-    system_start_time = datetime.now()
+    reset_monitor_time()
+    return jsonify({'success': True})
+
+@app.route('/api/start_monitoring', methods=['POST'])
+def start_monitoring():
+    start_monitoring_time()
+    return jsonify({'success': True})
+
+@app.route('/api/stop_monitoring', methods=['POST'])
+def stop_monitoring():
+    stop_monitoring_time()
     return jsonify({'success': True})
 
 if __name__ == '__main__':
