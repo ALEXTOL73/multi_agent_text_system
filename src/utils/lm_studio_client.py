@@ -8,6 +8,8 @@ import logging
 from typing import Optional, Dict, Any
 import json
 from datetime import datetime
+import hashlib
+from functools import lru_cache
 
 class LMStudioClient:
     """
@@ -18,7 +20,9 @@ class LMStudioClient:
                  base_url: str = "http://localhost:1234/v1",
                  model_name: str = "gemma-3-12b-it",
                  max_retries: int = 3,
-                 timeout: int = 300):
+                 timeout: int = 300,
+                 cache_enabled: bool = True,
+                 cache_size: int = 100):
         """
         Инициализация клиента LM Studio.
         
@@ -27,6 +31,8 @@ class LMStudioClient:
             model_name: Имя модели
             max_retries: Максимальное количество повторных попыток
             timeout: Таймаут запроса в секундах
+            cache_enabled: Включить кэширование запросов
+            cache_size: Размер кэша
         """
         self.base_url = base_url.rstrip('/')
         self.model_name = model_name
@@ -34,6 +40,11 @@ class LMStudioClient:
         self.timeout = aiohttp.ClientTimeout(total=timeout, connect=30)
         self.session: Optional[aiohttp.ClientSession] = None
         self.logger = logging.getLogger("lm_studio_client")
+        self.cache_enabled = cache_enabled
+        self._cache = {} if cache_enabled else None
+        self.cache_size = cache_size
+        self.cache_hits = 0
+        self.cache_misses = 0
         
     async def __aenter__(self):
         """Контекстный менеджер для входа"""
@@ -53,6 +64,85 @@ class LMStudioClient:
         """Закрытие сессии"""
         if self.session and not self.session.closed:
             await self.session.close()
+    
+    def _get_cache_key(self, prompt: str, temperature: float, max_tokens: int, system_prompt: Optional[str] = None) -> str:
+        """
+        Создание ключа для кэша на основе параметров запроса.
+        
+        Args:
+            prompt: Промпт
+            temperature: Температура
+            max_tokens: Максимальное количество токенов
+            system_prompt: Системный промпт
+            
+        Returns:
+            Ключ для кэша
+        """
+        # Создаем строку для хэширования
+        cache_string = f"{prompt}|{temperature}|{max_tokens}|{system_prompt or ''}|{self.model_name}"
+        return hashlib.md5(cache_string.encode('utf-8')).hexdigest()
+    
+    def _get_from_cache(self, cache_key: str) -> Optional[Dict[str, Any]]:
+        """
+        Получение результата из кэша.
+        
+        Args:
+            cache_key: Ключ кэша
+            
+        Returns:
+            Результат из кэша или None
+        """
+        if not self.cache_enabled or not self._cache:
+            return None
+            
+        if cache_key in self._cache:
+            self.cache_hits += 1
+            self.logger.debug(f"Кэш hit для ключа: {cache_key[:8]}...")
+            return self._cache[cache_key]
+        
+        self.cache_misses += 1
+        return None
+    
+    def _add_to_cache(self, cache_key: str, result: Dict[str, Any]) -> None:
+        """
+        Добавление результата в кэш.
+        
+        Args:
+            cache_key: Ключ кэша
+            result: Результат для сохранения
+        """
+        if not self.cache_enabled or not self._cache:
+            return
+            
+        # Если кэш переполнен, удаляем самый старый элемент
+        if len(self._cache) >= self.cache_size:
+            # Удаляем первый элемент (самый старый)
+            oldest_key = next(iter(self._cache))
+            del self._cache[oldest_key]
+            self.logger.debug(f"Кэш переполнен, удален старый элемент: {oldest_key[:8]}...")
+        
+        self._cache[cache_key] = result
+        self.logger.debug(f"Добавлено в кэш: {cache_key[:8]}...")
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        Получение статистики кэша.
+        
+        Returns:
+            Словарь со статистикой кэша
+        """
+        total_requests = self.cache_hits + self.cache_misses
+        hit_rate = (self.cache_hits / total_requests) if total_requests > 0 else 0
+        
+        return {
+            "cache_enabled": self.cache_enabled,
+            "cache_size": len(self._cache) if self._cache else 0,
+            "max_cache_size": self.cache_size,
+            "cache_hits": self.cache_hits,
+            "cache_misses": self.cache_misses,
+            "total_requests": total_requests,
+            "hit_rate": hit_rate
+        }
             
     async def generate(self, 
                       prompt: str, 
@@ -91,6 +181,12 @@ class LMStudioClient:
         Returns:
             Dictionary with 'text' and 'metadata' including request parameters
         """
+        # Проверяем кэш сначала
+        cache_key = self._get_cache_key(prompt, temperature, max_tokens, system_prompt)
+        cached_result = self._get_from_cache(cache_key)
+        if cached_result:
+            return cached_result
+        
         # Use context manager for each request to ensure proper cleanup
         async with aiohttp.ClientSession(timeout=self.timeout) as session:
             # Check connection first
@@ -143,10 +239,15 @@ class LMStudioClient:
                                 "model": self.model_name
                             }
                             
-                            return {
+                            result = {
                                 "text": generated_text,
                                 "metadata": metadata
                             }
+                            
+                            # Сохраняем в кэш
+                            self._add_to_cache(cache_key, result)
+                            
+                            return result
                         else:
                             error_text = await response.text()
                             self.logger.warning(f"Ошибка LM Studio (статус {response.status}): {error_text}")

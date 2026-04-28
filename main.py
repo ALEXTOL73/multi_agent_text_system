@@ -30,22 +30,6 @@ import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="tqdm")
 warnings.filterwarnings("ignore", category=UserWarning)
 
-# Redirect tqdm to null
-import sys
-from io import StringIO
-class TqdmSilencer:
-    def write(self, text):
-        pass
-    def flush(self):
-        pass
-
-# Replace tqdm's output
-try:
-    import tqdm
-    tqdm.tqdm = lambda *args, **kwargs: args[0] if args else iter([])
-except ImportError:
-    pass
-
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent / "src"))
 
@@ -53,9 +37,6 @@ from src.orchestrator import Orchestrator
 from src.utils.metrics_table_manager import MetricsTableManager
 from src.utils.realtime_metrics import realtime_store
 import config
-import threading
-import webbrowser
-import time
 
 def setup_logging():
     """Setup logging with date-based folders"""
@@ -670,6 +651,228 @@ async def process_text_file(input_file: str,
         "state": results  # Use results as state since orchestrator returns metrics in results
     }
 
+async def process_batch_files_async(domain: str = "general", 
+                                   enable_correction: bool = True, 
+                                   enable_summarization: bool = True,
+                                   metrics_manager: Optional[MetricsTableManager] = None,
+                                   max_concurrent_files: int = 1) -> Optional[dict]:
+    """
+    Асинхронная пакетная обработка файлов из директории inputs/
+    
+    Args:
+        domain: Текстовая доменная область
+        enable_correction: Включить коррекцию
+        enable_summarization: Включить суммаризацию
+        metrics_manager: Менеджер метрик
+        max_concurrent_files: Максимальное количество одновременно обрабатываемых файлов
+        
+    Returns:
+        Словарь с результатами обработки всех файлов
+    """
+    ROOT_DIR = Path(__file__).parent
+    DATA_DIR = ROOT_DIR / "data"
+    CORRECTION_METRICS_DIR = DATA_DIR / "correction_metrics"
+    SUMMARY_METRICS_DIR = DATA_DIR / "summary_metrics"
+    LOGS_DIR = ROOT_DIR / "logs"
+    INPUT_DIR = ROOT_DIR / "inputs"  # correct path for inputs folder
+    inputs_dir = INPUT_DIR
+    etalon_dir = inputs_dir / "etalon"
+    incorrect_dir = inputs_dir / "incorrect"
+    summary_etalon_dir = inputs_dir / "summary_etalon"
+    
+    results = {}
+    all_files = []
+    
+    # Collect only incorrect files for processing
+    if incorrect_dir.exists():
+        incorrect_files = list(incorrect_dir.glob("*.txt"))
+        for file_path in incorrect_files:
+            all_files.append(("incorrect", file_path))
+    
+    print_separator("ASYNC BATCH FILE PROCESSING")
+    print(f" Found files: {len(all_files)}")
+    print(f" Domain: {domain}")
+    print(f" Correction: {'Enabled' if enable_correction else 'Disabled'}")
+    print(f" Summarization: {'Enabled' if enable_summarization else 'Disabled'}")
+    print(f" Max concurrent files: {max_concurrent_files}")
+    
+    # Check ПРОПУСК_ОБРАБОТАННЫХ setting
+    skip_processed = config.ПРОПУСК_ОБРАБОТАННЫХ
+    print(f" Skip processed files: {'YES' if skip_processed else 'NO'}")
+    
+    if skip_processed == 1:
+        # Check which files are already processed and process only missing ones
+        print(" MODE: Skip already processed files, process only missing ones")
+        
+        # Check which files already have metrics
+        processed_files = set()
+        correction_metrics_dir = Path("data/correction_metrics")
+        if correction_metrics_dir.exists():
+            for json_file in correction_metrics_dir.glob("*.json"):
+                processed_files.add(json_file.stem)
+        
+        print(f" Already processed files: {len(processed_files)}")
+        for filename in processed_files:
+            print(f"   - {filename}")
+        
+        # Filter out already processed files
+        files_to_process = []
+        for file_type, file_path in all_files:
+            if file_path.stem not in processed_files:
+                files_to_process.append((file_type, file_path))
+        
+        if not files_to_process:
+            print(" All files already processed, loading existing metrics only...")
+            time.sleep(3)  # Give web monitor time to load existing files
+            print("Web monitor should now show all existing metrics files")
+            return {}
+        else:
+            print(f" Processing {len(files_to_process)} missing files:")
+            for file_type, file_path in files_to_process:
+                print(f"   - {file_path.name}")
+            
+            # Update all_files to only include missing files
+            all_files = files_to_process
+    else:
+        # Reprocess all files, clear existing data
+        print(" MODE: Reprocess all files, clear existing data")
+        # Clear existing metrics files
+        import shutil
+        data_dirs = ["data/correction_metrics", "data/summary_metrics", "data/correction", "data/summary"]
+        for data_dir in data_dirs:
+            if Path(data_dir).exists():
+                shutil.rmtree(data_dir)
+                Path(data_dir).mkdir(parents=True, exist_ok=True)
+                print(f" Cleared and recreated: {data_dir}")
+    
+    # Create semaphore to limit concurrent processing
+    semaphore = asyncio.Semaphore(max_concurrent_files)
+    
+    async def process_single_file_async(file_info):
+        """Асинхронная обработка одного файла с метриками производительности"""
+        file_type, file_path = file_info
+        start_time = time.time()
+        
+        async with semaphore:
+            print_separator(f"ASYNC FILE #{file_path.name}: {file_path.name}")
+            print(f" Type: {'Reference' if file_type == 'etalon' else 'Incorrect'}")
+            print(f" Path: {file_path}")
+            print(f" File size: {file_path.stat().st_size} bytes")
+            
+            # Find corresponding files
+            reference_file = None
+            summary_file = None
+            
+            if file_type == "incorrect" and etalon_dir.exists():
+                reference_candidates = list(etalon_dir.glob(f"{file_path.stem}.txt"))
+                print(f" [LOG] Looking for reference: {file_path.stem}.txt")
+                print(f" [LOG] Found candidates: {len(reference_candidates)}")
+                if reference_candidates:
+                    reference_file = str(reference_candidates[0])
+                    print(f" [LOG] Found reference: {Path(reference_file).name}")
+                else:
+                    print(f" [LOG] No reference found for {file_path.name}")
+            
+            if summary_etalon_dir.exists():
+                summary_candidates = list(summary_etalon_dir.glob(f"{file_path.stem}.txt"))
+                print(f" [LOG] Looking for summary: {file_path.stem}.txt")
+                print(f" [LOG] Found summary candidates: {len(summary_candidates)}")
+                if summary_candidates:
+                    summary_file = str(summary_candidates[0])
+                    print(f" [LOG] Found reference summary: {Path(summary_file).name}")
+                else:
+                    print(f" [LOG] No reference summary found for {file_path.name}")
+            
+            print(f" [LOG] Processing asynchronously...")
+            print(f" [LOG] Correction: {'Enabled' if enable_correction else 'Disabled'}")
+            print(f" [LOG] Summarization: {'Enabled' if enable_summarization else 'Disabled'}")
+            
+            # Only enable correction for incorrect files, not for etalon files
+            file_enable_correction = enable_correction and (file_type == "incorrect")
+            
+            try:
+                file_results = await process_text_file(
+                    input_file=str(file_path),
+                    reference_file=reference_file,
+                    reference_summary_file=summary_file,
+                    domain=domain,
+                    output_file=str(config.FULL_METRICS_DIR / f"{file_path.stem}.json"),
+                    enable_correction=file_enable_correction,
+                    enable_summarization=enable_summarization
+                )
+                
+                processing_time = time.time() - start_time
+                
+                if file_results:
+                    # Extract actual results for display
+                    actual_results = file_results.get("results", file_results)
+                    print_batch_results(actual_results, file_type)
+                    print(f" [METRICS] File {file_path.name} processed successfully")
+                    print(f" [METRICS] Processing time: {processing_time:.2f}s ({processing_time/60:.1f}min)")
+                    print(f" [METRICS] Throughput: {file_path.stat().st_size/processing_time:.2f} bytes/sec")
+                    
+                    # Update metrics in realtime store and table
+                    try:
+                        # Extract state from results for metrics
+                        state = file_results.get("state", file_results)
+                        if metrics_manager and state:
+                            filename = file_path.name
+                            metrics_manager.update_metrics_table(state, filename)
+                            print(f" [LOG] Metrics table updated for {filename}")
+                    except Exception as e:
+                        print(f" [ERROR] Could not update metrics table: {e}")
+                    
+                    return file_path.name, file_results
+                else:
+                    print(f" [WARNING] No results for {file_path.name}")
+                    print(f" [METRICS] Processing time: {processing_time:.2f}s")
+                    return file_path.name, None
+                    
+            except Exception as e:
+                processing_time = time.time() - start_time
+                print(f" [ERROR] Error processing {file_path.name}: {e}")
+                print(f" [METRICS] Failed after: {processing_time:.2f}s")
+                return file_path.name, None
+    
+    # Process files asynchronously with limited concurrency
+    print(f" Starting async processing of {len(all_files)} files with max {max_concurrent_files} concurrent...")
+    
+    # Create asyncio.Task objects to ensure proper execution
+    tasks = [asyncio.create_task(process_single_file_async(file_info)) for file_info in all_files]
+    
+    # Process with progress tracking
+    completed = 0
+    total = len(tasks)
+    batch_start_time = time.time()
+    
+    # Use asyncio.as_completed to get results as they complete
+    for future in asyncio.as_completed(tasks):
+        try:
+            filename, file_results = await future
+            if file_results:
+                results[filename] = file_results
+            completed += 1
+            print(f" [PROGRESS] {completed}/{total} files completed ({completed/total*100:.1f}%)")
+        except Exception as e:
+            print(f" [ERROR] Error in async processing: {e}")
+            completed += 1
+    
+    batch_end_time = time.time()
+    total_processing_time = batch_end_time - batch_start_time
+    
+    print_separator("ASYNC PROCESSING COMPLETE")
+    print(f" [METRICS] Successfully processed: {len(results)}/{total} files")
+    print(f" [METRICS] Total processing time: {total_processing_time:.2f}s ({total_processing_time/60:.1f}min)")
+    print(f" [METRICS] Average time per file: {total_processing_time/total:.2f}s")
+    print(f" [METRICS] Throughput: {len(results)/total_processing_time:.2f} files/sec")
+    
+    # Calculate total data processed
+    total_bytes = sum(file_path.stat().st_size for _, file_path in all_files)
+    print(f" [METRICS] Total data processed: {total_bytes/1024/1024:.2f} MB")
+    print(f" [METRICS] Data throughput: {total_bytes/total_processing_time/1024:.2f} KB/sec")
+    
+    return results
+
 async def process_batch_files(domain: str = "general", 
                            enable_correction: bool = True, 
                            enable_summarization: bool = True,
@@ -738,7 +941,6 @@ async def process_batch_files(domain: str = "general",
         
         if not files_to_process:
             print(" All files already processed, loading existing metrics only...")
-            import time
             time.sleep(3)  # Give web monitor time to load existing files
             print("Web monitor should now show all existing metrics files")
             return {}
@@ -856,7 +1058,6 @@ async def main():
     start_web_monitor()
     
     # Reset web monitor time after a short delay to ensure it's running
-    import time
     time.sleep(2)  # Wait for web monitor to start
     
     try:
@@ -900,12 +1101,27 @@ async def main():
         print(f"Warning: Could not start monitoring time: {e}")
     
     # Process all files from inputs/ directory
-    results = await process_batch_files(
-        domain="general",
-        enable_correction=True,
-        enable_summarization=True,
-        metrics_manager=metrics_manager
-    )
+    # Выбор между асинхронной и синхронной обработкой
+    use_async_processing = True  # Можно изменить на False для синхронной обработки
+    max_concurrent_files = 1 if use_async_processing else 1  # Уменьшено до 2 для стабильности LM Studio
+    
+    if use_async_processing:
+        print(" Using ASYNC processing for better performance")
+        results = await process_batch_files_async(
+            domain="general",
+            enable_correction=True,
+            enable_summarization=True,
+            metrics_manager=metrics_manager,
+            max_concurrent_files=max_concurrent_files
+        )
+    else:
+        print(" Using SYNC processing (original method)")
+        results = await process_batch_files(
+            domain="general",
+            enable_correction=True,
+            enable_summarization=True,
+            metrics_manager=metrics_manager
+        )
     
     # Output summary
     if results:
@@ -918,7 +1134,6 @@ async def main():
     
     # Wait for web monitor to process the last file
     print("\n Waiting for web monitor to process final files...")
-    import time
     time.sleep(5)  # Give web monitor time to process the last file
     print("Web monitor should now show all processed files")
 

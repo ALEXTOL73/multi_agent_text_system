@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import List
 
 
-
 # --- Управление обработкой файлов ---
 # 1 = пропустить уже обработанные файлы, загрузить только существующие метрики в веб-монитор
 # 0 = переобработать все файлы из inputs/, очистить веб-монитор перед началом
@@ -26,8 +25,8 @@ ENABLE_DATE_FOLDERS = True
 DATE_FORMAT = "DDMMYY"  # Format: 220426 for April 22, 2026
 
 # --- Коррекция ---
-WER_WEIGHT = 0.4
-LEV_WEIGHT = 10.0
+WER_WEIGHT = 0.5
+LEV_WEIGHT = 5.0
 PERPLEXITY_WEIGHT = 0.2
 DELTA_LEV_THRESHOLD = 0.02
 MAX_LEV_RETRY_ATTEMPTS = 2
