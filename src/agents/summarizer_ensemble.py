@@ -90,7 +90,9 @@ class SummarizerEnsemble(BaseAgent):
                          ensemble_summary_temperatures=[v["temperature"] for v in variants_data],
                          ensemble_summary_metrics=[v["metrics"] for v in variants_data],
                          summary=best_variant["text"],
-                         best_summary_prompt=best_variant.get("prompt", ""),
+                         best_summary_prompt=prompt_summary,
+                         best_summary_prompt_type=best_variant.get("prompt_type", "basic"),
+                         best_summary_temperature=best_variant.get("temperature", 0.7),
                          summary_metrics=best_variant["metrics"])
         
         self.log_execution(f"Выбран лучший вариант с SumScore={best_variant['metrics'].get('sum_score', 0):.3f}")

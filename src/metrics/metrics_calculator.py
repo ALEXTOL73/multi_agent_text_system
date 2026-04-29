@@ -296,7 +296,7 @@ class MetricsCalculator:
                              original_text: str,
                              summary_text: str,
                              lm_client,
-                             reference_summary: Optional[str] = None) -> tuple[float, str]:
+                             reference_summary: Optional[str] = None) -> tuple[float, str, Dict[str, float]]:
         """
         Расчет G-Eval с помощью LLM.
         
@@ -306,7 +306,7 @@ class MetricsCalculator:
             lm_client: Клиент LM Studio
             
         Returns:
-            G-Eval score в диапазоне [0, 1] и объяснение на русском языке
+            G-Eval score в диапазоне [0, 1], объяснение на русском языке и словарь с детальными критериями
         """
         try:
             # Format reference summary if provided
@@ -325,31 +325,51 @@ class MetricsCalculator:
                 system_prompt="Ты эксперт по оценке качества текста. Давай честные оценки и подробные объяснения на русском языке."
             )
             
-            # Извлечение числа и объяснения из ответа
-            score_match = re.search(r'Score:\s*(0?\.\d+|1\.0|0|1)', response.strip())
-            explanation_match = re.search(r'Explanation:\s*(.+)', response.strip(), re.DOTALL)
+            # Извлечение детальных критериев из ответа
+            criteria_pattern = r'(Точность|Полнота|Краткость|Ясность|Соответствие_эталону|Именованные_сущности):\s*(0?\.\d+|1\.0|0|1)'
+            criteria_matches = re.findall(criteria_pattern, response.strip())
             
-            if score_match:
-                score = float(score_match.group(1))
-                explanation = explanation_match.group(1).strip() if explanation_match else "Объяснение не предоставлено"
-                
-                # Логируем только оценку
-                self.logger.info(f"G-Eval Score: {score}")
-                
-                return min(max(score, 0.0), 1.0), explanation
+            criteria_scores = {}
+            for criterion, score in criteria_matches:
+                criteria_scores[criterion] = float(score)
+            
+            # Если критерии не найдены, попробуем более гибкий паттерн
+            if not criteria_scores:
+                self.logger.warning("Не удалось извлечь критерии в стандартном формате, пробуем гибкий парсинг")
+                # Попробуем найти числа в тексте и сопоставить с критериями по контексту
+                lines = response.strip().split('\n')
+                for line in lines:
+                    for criterion in ['Точность', 'Полнота', 'Краткость', 'Ясность', 'Соответствие_эталону', 'Именованные_сущности']:
+                        if criterion in line:
+                            # Ищем число в строке
+                            number_match = re.search(r'(0?\.\d+|1\.0|0|1)', line)
+                            if number_match:
+                                criteria_scores[criterion] = float(number_match.group(1))
+            
+            # Извлечение объяснения
+            explanation_match = re.search(r'Explanation:\s*(.+)', response.strip(), re.DOTALL)
+            explanation = explanation_match.group(1).strip() if explanation_match else "Объяснение не предоставлено"
+            
+            # Вычисляем среднее значение из критериев
+            if criteria_scores:
+                score = sum(criteria_scores.values()) / len(criteria_scores)
             else:
-                self.logger.warning(f"Не удалось извлечь score из ответа: {response}")
-                return 0.5, "Объяснение не предоставлено"
+                score = 0.5
+            
+            # Логируем только оценку
+            self.logger.info(f"G-Eval Score: {score:.4f}")
+            
+            return min(max(score, 0.0), 1.0), explanation, criteria_scores
                 
         except Exception as e:
             self.logger.error(f"Ошибка расчета G-Eval: {e}")
-            return 0.0
+            return 0.0, "", {}
     
     async def calculate_llm_judge(self,
                                 original_text: str,
                                 summary_text: str,
                                 lm_client,
-                                reference_summary: Optional[str] = None) -> tuple[float, str]:
+                                reference_summary: Optional[str] = None) -> tuple[float, str, Dict[str, float]]:
         """
         Расчет LLM-Judge score.
         
@@ -359,7 +379,7 @@ class MetricsCalculator:
             lm_client: Клиент LM Studio
             
         Returns:
-            LLM-Judge score в диапазоне [1, 10]
+            LLM-Judge score в диапазоне [1, 10], объяснение и словарь с детальными критериями
         """
         try:
             # Format reference summary if provided
@@ -378,25 +398,32 @@ class MetricsCalculator:
                 system_prompt="Ты строгий и точный оценщик кратких изложений текста. Давай честные, разнообразные оценки от 1 до 10 на основе реального качества. Не ставь средние оценки по умолчанию. Будь критичным в своей оценке."
             )
             
-            # Извлечение числа и объяснения из ответа
-            score_match = re.search(r'Score:\s*(10|[1-9])', response.strip())
-            explanation_match = re.search(r'Explanation:\s*(.+)', response.strip(), re.DOTALL)
+            # Извлечение детальных критериев из ответа
+            criteria_pattern = r'(Точность|Полнота|Краткость|Ясность|Соответствие_эталону|Именованные_сущности):\s*(10|[1-9])'
+            criteria_matches = re.findall(criteria_pattern, response.strip())
             
-            if score_match:
-                score = float(score_match.group(1))  # Получаем только число из группы 1
-                explanation = explanation_match.group(1).strip() if explanation_match else "No explanation provided"
-                
-                # Логируем только оценку, без объяснения на экран
-                self.logger.info(f"LLM-Judge Score: {score}")
-                
-                return min(max(score, 1.0), 10.0), explanation
+            criteria_scores = {}
+            for criterion, score in criteria_matches:
+                criteria_scores[criterion] = float(score)
+            
+            # Извлечение объяснения
+            explanation_match = re.search(r'Explanation:\s*(.+)', response.strip(), re.DOTALL)
+            explanation = explanation_match.group(1).strip() if explanation_match else "No explanation provided"
+            
+            # Вычисляем среднее значение из критериев
+            if criteria_scores:
+                score = sum(criteria_scores.values()) / len(criteria_scores)
             else:
-                self.logger.warning(f"Не удалось извлечь score из ответа: {response}")
-                return 5.0, "No explanation provided"
+                score = 5.0
+            
+            # Логируем только оценку
+            self.logger.info(f"LLM-Judge Score: {score:.4f}")
+            
+            return min(max(score, 1.0), 10.0), explanation, criteria_scores
                 
         except Exception as e:
             self.logger.error(f"Ошибка расчета LLM-Judge: {e}")
-            return 5.0, "Error occurred"
+            return 5.0, "", {}
     
     def calculate_sum_score(self,
                            geval_score: float,
@@ -537,14 +564,16 @@ class MetricsCalculator:
                 llm_judge_task = self.calculate_llm_judge(original_text, summary_text, lm_client, reference_summary)
                 
                 # Ждем выполнения обеих задач
-                (geval_score, geval_explanation), (llm_judge_score, llm_judge_explanation) = await asyncio.gather(
+                (geval_score, geval_explanation, geval_criteria), (llm_judge_score, llm_judge_explanation, llm_judge_criteria) = await asyncio.gather(
                     geval_task, llm_judge_task
                 )
                 
                 metrics["geval"] = geval_score
                 metrics["geval_explanation"] = geval_explanation
+                metrics["geval_criteria"] = geval_criteria  # Детальные критерии
                 metrics["llm_judge"] = llm_judge_score
                 metrics["llm_judge_explanation"] = llm_judge_explanation
+                metrics["llm_judge_criteria"] = llm_judge_criteria  # Детальные критерии
                 
                 # Расчет SumScore
                 sum_score = self.calculate_sum_score(

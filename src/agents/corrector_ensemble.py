@@ -130,7 +130,7 @@ class CorrectorEnsemble(BaseAgent):
                          ensemble_temperatures=[v["temperature"] for v in variants_data],
                          ensemble_metrics=[v["metrics"] for v in variants_data],
                          corrected_text=best_variant["text"],
-                         best_correction_prompt=best_variant.get("prompt", ""),
+                         best_correction_prompt=prompt_correction,
                          metrics_correction=best_variant["metrics"])
         
         self.log_execution(f"Выбран лучший вариант с CorScore={best_variant['metrics']['cor_score']:.3f}")

@@ -271,6 +271,7 @@ def save_summary_results(results: dict, output_file: str):
             # Best prompt
             f.write("=== PROMPT ===\n")
             best_prompt = results.get('best_summary_prompt', 'N/A')
+            best_prompt_type = results.get('best_summary_prompt_type', 'N/A')
             f.write(f"{best_prompt}\n\n")
             
             # Metrics
@@ -289,6 +290,11 @@ def save_summary_results(results: dict, output_file: str):
             f.write(f"LLM-Judge: {llm:.4f}\n" if isinstance(llm, (int, float)) else f"LLM-Judge: {llm}\n")
             f.write(f"BertScore: {bert:.4f}\n" if isinstance(bert, (int, float)) else f"BertScore: {bert}\n")
             f.write(f"SumScore: {sum_score:.4f}\n" if isinstance(sum_score, (int, float)) else f"SumScore: {sum_score}\n")
+            
+            # Best prompt type and temperature
+            f.write(f"Best Prompt Type: {best_prompt_type}\n")
+            best_temp = results.get('best_summary_temperature', 'N/A')
+            f.write(f"Best Temperature: {best_temp}\n")
             
             # Additional info
             summary_time = results.get('summary_time', 'N/A')
@@ -451,10 +457,13 @@ def print_batch_results(results: dict, file_type: str):
             summ_text = 'N/A'
         print(f"    Summary text: {summ_text[:50]}...")
         
-        # Show best prompt
+        # Show best prompt and temperature
         best_prompt = results.get('best_summary_prompt', 'N/A')
         if best_prompt != 'N/A':
             print(f"    Best prompt: {best_prompt[:100]}...")
+        best_temp = results.get('best_summary_temperature', 'N/A')
+        if best_temp != 'N/A':
+            print(f"    Best temperature: {best_temp}")
         
         if "summary_metrics" in results:
             m = results["summary_metrics"]
@@ -566,9 +575,6 @@ async def process_text_file(input_file: str,
             # Save correction metrics to correction_metrics folder
             correction_metrics_file = f"data/correction_metrics/{filename}.json"
             
-            # Also save correction metrics to full_metrics folder
-            correction_metrics_full_file = f"data/full_metrics/correction_{filename}.json"
-            
             # Calculate processing time for correction
             start_time = results.get("start_time")
             end_time = results.get("end_time")
@@ -592,10 +598,6 @@ async def process_text_file(input_file: str,
                 "temperature": results.get("correction_temperature", 0.7)
             }
             with open(correction_metrics_file, 'w', encoding='utf-8') as f:
-                json.dump(correction_metrics, f, ensure_ascii=False, indent=2)
-            
-            # Also save to full_metrics folder
-            with open(correction_metrics_full_file, 'w', encoding='utf-8') as f:
                 json.dump(correction_metrics, f, ensure_ascii=False, indent=2)
         
         # Save summary results
@@ -632,7 +634,9 @@ async def process_text_file(input_file: str,
                 "reference_summary": reference_summary,
                 "metrics": results.get("summary_metrics", {}),
                 "processing_time_seconds": processing_time_seconds,
-                "best_prompt": results.get("best_summary_prompt", results.get("best_prompt_sum", "")),  # Изменено
+                "best_prompt": results.get("best_summary_prompt", results.get("best_prompt_sum", "")),
+                "best_prompt_type": results.get("best_summary_prompt_type", "basic"),
+                "best_temperature": results.get("best_summary_temperature", 0.7),
                 "temperature": results.get("summarization_temperature", 0.7)
             }
             with open(summary_metrics_file, 'w', encoding='utf-8') as f:
