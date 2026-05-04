@@ -34,18 +34,18 @@ LEV_RETRY_TEMPS = [0.1, 0.8]
 USE_FEW_SHOT_PROMPT = True
 USE_CHAIN_OF_THOUGHT_PROMPT = True
 DYNAMIC_TEMPERATURES_ENABLED = False
-SELF_CONSISTENCY_ENABLED = False
-SELF_CONSISTENCY_EXTRA_COUNT = 0
+SELF_CONSISTENCY_ENABLED = True
+SELF_CONSISTENCY_EXTRA_COUNT = 1
 
 MAX_CORRECTION_ATTEMPTS = 1
-CORRECTION_TEMPERATURES = [0.7]
+CORRECTION_TEMPERATURES = [0.1]
 
 # --- Суммаризация ---
-SUMMARY_TEMPERATURES = [0.7]
-GEVAL_WEIGHT = 0.25
-LLM_JUDGE_WEIGHT = 0.2
-METEOR_WEIGHT = 0.4
-BERT_SCORE_WEIGHT = 0.25
+SUMMARY_TEMPERATURES = [0.5]
+GEVAL_WEIGHT = 0.30
+LLM_JUDGE_WEIGHT = 0.25
+METEOR_WEIGHT = 0.25
+BERT_SCORE_WEIGHT = 0.20
 SUMMARIZATION_ATTEMPTS = 1
 
 # --- Simplified prompts ---
@@ -53,16 +53,16 @@ USE_FEW_SHOT_PROMPT = True
 DYNAMIC_TEMPERATURES_ENABLED = False
 
 # --- Few-shot ---
-DYNAMIC_FEW_SHOT_ENABLED = False
+DYNAMIC_FEW_SHOT_ENABLED = True
 MAX_FEW_SHOT_EXAMPLES = 3
-FEW_SHOT_SIMILARITY_THRESHOLD = 0.6
-SUMMARY_DYNAMIC_FEW_SHOT_ENABLED = False
+FEW_SHOT_SIMILARITY_THRESHOLD = 0.7
+SUMMARY_DYNAMIC_FEW_SHOT_ENABLED = True
 SUMMARY_MAX_FEW_SHOT_EXAMPLES = 3
 SUMMARY_FEW_SHOT_LENGTH_RATIO = 0.3
-SUMMARY_FEW_SHOT_SIMILARITY_THRESHOLD = 0.3
+SUMMARY_FEW_SHOT_SIMILARITY_THRESHOLD = 0.7
 
 # --- Память ---
-PROMPT_AGGREGATION_ENABLED = False
+PROMPT_AGGREGATION_ENABLED = True
 PROMPT_CACHE_ENABLED = True
 PROMPT_CACHE_MAX_SIZE = 100
 PROMPT_CACHE_MIN_IMPROVEMENT = 0.05
@@ -111,9 +111,17 @@ STATIC_SUMMARY_EXAMPLES = [
 ]
 
 # --- Системные промпты ---
-CORRECTION_SYSTEM_PROMPT = """You are an expert at correcting errors in texts. Your task is to correct spelling, grammar, and punctuation errors in given text. Preserve the original meaning and style of the text. Return only the corrected text without additional comments."""
+CORRECTION_SYSTEM_PROMPT = """Ты эксперт по исправлению ошибок в русском тексте.
+- Исправляй орфографические, грамматические и пунктуационные ошибки
+- Сохраняй исходный смысл, стиль и тон текста
+- Не меняй намеренно правильные слова
+- Возвращай только исправленный текст без комментариев"""
 
-SUMMARIZATION_SYSTEM_PROMPT = """You are an expert at creating concise summaries of texts. Your task is to create a brief but informative summary of the main content of text. Preserve key ideas and facts. The summary should be approximately 30% shorter than the original."""
+SUMMARIZATION_SYSTEM_PROMPT = """Ты эксперт по созданию кратких содержаний на русском языке.
+- Выдели основные идеи и ключевые факты
+- Сохраняй важные именованные сущности (имена, даты, места)
+- Изложи 3-4 предложениями
+- Суммаризация должна быть на 30% короче оригинала"""
 
 PROMPT_GENERATION_SYSTEM_PROMPT = """You are an expert at creating effective prompts for language models. Create a prompt that will help the model perform the specified task with maximum quality. The prompt should be clear, specific, and contain necessary instructions."""
 

@@ -182,22 +182,24 @@ class CorrectionPromptGenerator(BaseAgent):
             Список вариантов промптов
         """
         variants = []
-        temperatures = [0.3, 0.6, 0.9]
+        temperatures = config.CORRECTION_TEMPERATURES
         
         # Different system prompts for each temperature to ensure variety
         system_prompts = [
             "Generate a minimal correction prompt. Focus ONLY on basic spelling and grammar fixes. Keep it under 50 words. Use {input_text} placeholder.",
             "Generate a style-focused correction prompt. Emphasize readability, flow, and professional tone. Include punctuation rules. Avoid listing basic errors. Use {input_text} placeholder.", 
-            "Generate a technical editing prompt. Focus on formatting, consistency, and coherence. Mention specific elements like numbers, abbreviations, and structure. Use {input_text} placeholder."
+            "Generate a technical editing prompt. Focus on formatting, consistency, and coherence. Mention specific elements like numbers, abbreviations, and structure. Use {input_text} placeholder.",
+            "Generate a comprehensive correction prompt. Cover all aspects: spelling, grammar, punctuation, style, and clarity. Use {input_text} placeholder."
         ]
         
         tasks = []
         for i, temp in enumerate(temperatures):
+            system_prompt = system_prompts[i] if i < len(system_prompts) else system_prompts[-1]
             task = self.lm_client.generate_with_retry(
                 prompt=user_prompt,
                 temperature=temp,
-                max_tokens=512,
-                system_prompt=system_prompts[i]
+                max_tokens=256,
+                system_prompt=system_prompt
             )
             tasks.append(task)
         

@@ -140,7 +140,7 @@ class SummarizerEnsemble(BaseAgent):
             tasks.append(task)
         
         # 1 Few-shot prompt (from 3 examples) - только для коротких текстов
-        if config.USE_FEW_SHOT_PROMPT and len(input_text) < 1500:
+        if config.USE_FEW_SHOT_PROMPT and len(input_text) < 3000:
             few_shot_prompt = self._build_few_shot_prompt(input_text)
             task = self._generate_single_summary(
                 input_text=input_text,
@@ -150,11 +150,11 @@ class SummarizerEnsemble(BaseAgent):
                 reference_summary=reference_summary
             )
             tasks.append(task)
-        elif config.USE_FEW_SHOT_PROMPT and len(input_text) >= 1500:
-            self.log_execution("Few-shot summary prompt skipped - text too long (>1500 chars)")
+        elif config.USE_FEW_SHOT_PROMPT and len(input_text) >= 3000:
+            self.log_execution("Few-shot prompt skipped - text too long (>3000 chars)")
         
         # 1 Chain-of-Thought prompt - только для коротких текстов
-        if config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) < 1500:
+        if config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) < 3000:
             cot_prompt = self._build_cot_summary_prompt(input_text)
             task = self._generate_single_summary(
                 input_text=input_text,
@@ -164,8 +164,8 @@ class SummarizerEnsemble(BaseAgent):
                 reference_summary=reference_summary
             )
             tasks.append(task)
-        elif config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) >= 1500:
-            self.log_execution("CoT summary prompt skipped - text too long (>1500 chars)")
+        elif config.USE_CHAIN_OF_THOUGHT_PROMPT and len(input_text) >= 3000:
+            self.log_execution("CoT prompt skipped - text too long (>3000 chars)")
         
         # Выполнение всех задач
         try:

@@ -612,9 +612,6 @@ async def process_text_file(input_file: str,
             # Save detailed summary metrics to summary_metrics folder (JSON with LLM explanations)
             summary_metrics_file = f"data/summary_metrics/{filename}.json"
             
-            # Also save summary metrics to full_metrics folder
-            summary_metrics_full_file = f"data/full_metrics/summary_{filename}.json"
-            
             # Calculate processing time
             start_time = results.get("start_time")
             end_time = results.get("end_time")
@@ -640,10 +637,6 @@ async def process_text_file(input_file: str,
                 "temperature": results.get("summarization_temperature", 0.7)
             }
             with open(summary_metrics_file, 'w', encoding='utf-8') as f:
-                json.dump(summary_metrics, f, ensure_ascii=False, indent=2)
-            
-            # Also save to full_metrics folder
-            with open(summary_metrics_full_file, 'w', encoding='utf-8') as f:
                 json.dump(summary_metrics, f, ensure_ascii=False, indent=2)
         
         # Also save combined results to original output file
@@ -1138,7 +1131,7 @@ async def main():
     
     # Wait for web monitor to process the last file
     print("\n Waiting for web monitor to process final files...")
-    time.sleep(5)  # Give web monitor time to process the last file
+    time.sleep(60)  # Give web monitor time to process the last file
     print("Web monitor should now show all processed files")
 
 def format_text_sentences(text: str) -> str:

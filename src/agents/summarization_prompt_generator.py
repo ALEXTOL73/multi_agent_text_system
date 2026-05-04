@@ -221,7 +221,7 @@ class SummarizationPromptGenerator(BaseAgent):
             Список вариантов промптов
         """
         variants = []
-        temperatures = [0.3, 0.6, 0.9]
+        temperatures = config.SUMMARY_TEMPERATURES
         
         # Different system prompts for each temperature to ensure variety
         # Use language-appropriate system prompts
@@ -229,22 +229,25 @@ class SummarizationPromptGenerator(BaseAgent):
             system_prompts = [
                 "You are an expert at creating effective summarization prompts in RUSSIAN. Generate a clear, concise prompt that instructs to create a summary in 3-4 sentences in RUSSIAN. Focus on extracting key information. The prompt should use {input_text} as placeholder. NEVER mention character limits or symbols. OUTPUT MUST BE IN RUSSIAN.",
                 "You are a specialist in prompt engineering for text summarization in RUSSIAN. Create a comprehensive prompt that generates summaries in 3-4 sentences in RUSSIAN. Emphasize thorough coverage of main points. Use {input_text} placeholder. ABSOLUTELY NO character limits mentioned. OUTPUT MUST BE IN RUSSIAN.", 
-                "You are a master prompt designer for summarization tasks in RUSSIAN. Generate a balanced prompt that creates summaries in 3-4 sentences in RUSSIAN. Combine conciseness with completeness. Use {input_text} placeholder. NEVER reference character counts or symbols. OUTPUT MUST BE IN RUSSIAN."
+                "You are a master prompt designer for summarization tasks in RUSSIAN. Generate a balanced prompt that creates summaries in 3-4 sentences in RUSSIAN. Combine conciseness with completeness. Use {input_text} placeholder. NEVER reference character counts or symbols. OUTPUT MUST BE IN RUSSIAN.",
+                "You are a senior prompt engineer for RUSSIAN summarization. Create a highly detailed prompt that instructs to create comprehensive summaries in 3-4 sentences in RUSSIAN. Focus on accuracy, completeness, and clarity. Use {input_text} placeholder. NO character or symbol limits. OUTPUT MUST BE IN RUSSIAN."
             ]
         else:
             system_prompts = [
                 "You are an expert at creating effective summarization prompts. Generate a clear, concise prompt that instructs to create a summary in 3-4 sentences. Focus on extracting key information. The prompt should use {input_text} as placeholder. NEVER mention character limits or symbols.",
                 "You are a specialist in prompt engineering for text summarization. Create a comprehensive prompt that generates summaries in 3-4 sentences. Emphasize thorough coverage of main points. Use {input_text} placeholder. ABSOLUTELY NO character limits mentioned.", 
-                "You are a master prompt designer for summarization tasks. Generate a balanced prompt that creates summaries in 3-4 sentences. Combine conciseness with completeness. Use {input_text} placeholder. NEVER reference character counts or symbols."
+                "You are a master prompt designer for summarization tasks. Generate a balanced prompt that creates summaries in 3-4 sentences. Combine conciseness with completeness. Use {input_text} placeholder. NEVER reference character counts or symbols.",
+                "You are a senior prompt engineer for summarization. Create a highly detailed prompt that instructs to create comprehensive summaries in 3-4 sentences. Focus on accuracy, completeness, and clarity. Use {input_text} placeholder. NO character or symbol limits."
             ]
         
         tasks = []
         for i, temp in enumerate(temperatures):
+            system_prompt = system_prompts[i] if i < len(system_prompts) else system_prompts[-1]
             task = self.lm_client.generate_with_retry(
                 prompt=user_prompt,
                 temperature=temp,
-                max_tokens=512,
-                system_prompt=system_prompts[i]
+                max_tokens=256,
+                system_prompt=system_prompt
             )
             tasks.append(task)
         
@@ -299,14 +302,14 @@ async def _generate_prompt_variants(self, user_prompt: str) -> List[str]:
         Список вариантов промптов
     """
     variants = []
-    temperatures = [0.3, 0.6, 0.9]
+    temperatures = config.SUMMARY_TEMPERATURES
     
     tasks = []
     for temp in temperatures:
         task = self.lm_client.generate_with_retry(
             prompt=user_prompt,
             temperature=temp,
-            max_tokens=512,
+            max_tokens=256,
             system_prompt=config.PROMPT_GENERATION_SYSTEM_PROMPT
         )
         tasks.append(task)
